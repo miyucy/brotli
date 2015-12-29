@@ -7,6 +7,8 @@ $INCFLAGS << ' -I./enc -I./dec'
 
 FileUtils.mkdir_p 'enc'
 FileUtils.mkdir_p 'dec'
+FileUtils.mkdir_p File.join(__dir__, 'enc')
+FileUtils.mkdir_p File.join(__dir__, 'dec')
 
 srcs = []
 objs = []
