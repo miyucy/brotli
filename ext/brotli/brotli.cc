@@ -3,7 +3,7 @@
 static VALUE rb_mBrotli;
 static VALUE rb_eBrotli;
 
-int
+static int
 brotli_inflate_cb(void* data, const uint8_t* buf, size_t count)
 {
     VALUE dst = (VALUE)data;
