@@ -1,9 +1,16 @@
 language: ruby
+sudo: false
+cache:
+  bundler: true
+  directories:
+    - $HOME/.ccache
+
 rvm:
   - 2.2.0
   - 2.3.2
 env:
   global:
     - RANTLY_COUNT=10000
+    - PATH="/usr/lib/ccache:$PATH"
 before_install:
   - gem install bundler
