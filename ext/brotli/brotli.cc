@@ -126,8 +126,8 @@ struct brotli_deflate_args_t
 {
     char *str;
     size_t str_length;
-    std::string buf;
     brotli::BrotliParams *params;
+    std::string buf;
 
 } brotli_deflate_args_t;
 
@@ -157,9 +157,9 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     }
 
     struct brotli_deflate_args_t args = {
-        .str = RSTRING_PTR(str),
-        .str_length = RSTRING_LEN(str),
-        .params = &params
+        RSTRING_PTR(str),
+        RSTRING_LEN(str),
+        &params
     };
     if (!rb_thread_call_without_gvl(brotli_deflate_no_gvl, (void *)&args, NULL, NULL)) {
         rb_raise(rb_eBrotli, "ERROR");
