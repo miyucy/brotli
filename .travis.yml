@@ -1,5 +1,9 @@
 language: ruby
 rvm:
   - 2.2.0
+  - 2.3.2
+env:
+  global:
+    - RANTLY_COUNT=10000
 before_install:
   - gem install bundler
