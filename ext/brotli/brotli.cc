@@ -122,25 +122,25 @@ brotli_deflate_parse_options(brotli::BrotliParams& params, VALUE opts)
     }
 }
 
-struct brotli_deflate_t
+struct brotli_deflate_args_t
 {
     char *str;
     size_t str_length;
     std::string buf;
     brotli::BrotliParams *params;
 
-} brotli_deflate_t;
+} brotli_deflate_args_t;
 
 static void *
 brotli_deflate_no_gvl(void *arg)
 {
-    struct brotli_deflate_t *args = (struct brotli_deflate_t *)arg;
+    struct brotli_deflate_args_t *args = (struct brotli_deflate_args_t *)arg;
 
     brotli::BrotliMemIn in(args->str, args->str_length);
     args->buf.reserve(args->str_length * 2 + 1);
     brotli::BrotliStringOut out(&args->buf, args->buf.capacity());
 
-    return (void *)brotli::BrotliCompress(*(args->params), &in, &out);
+    return (void *)(bool)brotli::BrotliCompress(*(args->params), &in, &out);
 }
 
 static VALUE
@@ -156,7 +156,7 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
         brotli_deflate_parse_options(params, opts);
     }
 
-    struct brotli_deflate_t args = {
+    struct brotli_deflate_args_t args = {
         .str = RSTRING_PTR(str),
         .str_length = RSTRING_LEN(str),
         .params = &params
