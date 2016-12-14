@@ -1,4 +1,5 @@
 #include "brotli.h"
+#include "ruby/thread.h"
 
 #define CSTR2SYM(x) ID2SYM(rb_intern(x))
 
@@ -121,6 +122,27 @@ brotli_deflate_parse_options(brotli::BrotliParams& params, VALUE opts)
     }
 }
 
+struct brotli_deflate_args_t
+{
+    char *str;
+    size_t str_length;
+    brotli::BrotliParams *params;
+    std::string buf;
+
+} brotli_deflate_args_t;
+
+static void *
+brotli_deflate_no_gvl(void *arg)
+{
+    struct brotli_deflate_args_t *args = (struct brotli_deflate_args_t *)arg;
+
+    brotli::BrotliMemIn in(args->str, args->str_length);
+    args->buf.reserve(args->str_length * 2 + 1);
+    brotli::BrotliStringOut out(&args->buf, args->buf.capacity());
+
+    return (void *)(bool)brotli::BrotliCompress(*(args->params), &in, &out);
+}
+
 static VALUE
 brotli_deflate(int argc, VALUE *argv, VALUE self)
 {
@@ -134,15 +156,17 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
         brotli_deflate_parse_options(params, opts);
     }
 
-    brotli::BrotliMemIn in(RSTRING_PTR(str), RSTRING_LEN(str));
-    std::string buf;
-    buf.reserve(RSTRING_LEN(str) * 2 + 1);
-    brotli::BrotliStringOut out(&buf, buf.capacity());
-    if (!brotli::BrotliCompress(params, &in, &out)) {
+    struct brotli_deflate_args_t args = {
+        RSTRING_PTR(str),
+        RSTRING_LEN(str),
+        &params
+    };
+    if (!rb_thread_call_without_gvl(brotli_deflate_no_gvl, (void *)&args, NULL, NULL)) {
         rb_raise(rb_eBrotli, "ERROR");
     }
 
-    return rb_str_new(buf.c_str(), buf.size());
+
+    return rb_str_new(args.buf.c_str(), args.buf.size());
 }
 
 extern "C" {
