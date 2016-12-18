@@ -19,7 +19,7 @@ describe Brotli do
     it '5 threads' do
       q = Queue.new
       data.each { |datum| q.push datum }
-      q.close
+      5.times { q.push nil }
 
       w = 5.times.map do
         Thread.new do
@@ -54,7 +54,7 @@ describe Brotli do
     it '5 threads' do
       q = Queue.new
       data.each { |datum| q.push datum }
-      q.close
+      5.times { q.push nil }
 
       w = 5.times.map do
         Thread.new do
