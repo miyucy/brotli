@@ -23,23 +23,28 @@ brotli_free(void* opaque, void* address)
  * inflate
  ******************************************************************************/
 
-static VALUE
-brotli_inflate(VALUE self, VALUE str)
-{
-    StringValue(str);
+typedef struct {
+    uint8_t* str;
+    size_t len;
+    BrotliDecoderState* s;
+    buffer_t* buffer;
+    BrotliDecoderResult r;
+} brotli_inflate_args_t;
 
+static void*
+brotli_inflate_no_gvl(void *arg)
+{
+    brotli_inflate_args_t *args = (brotli_inflate_args_t*)arg;
     uint8_t         output[BUFSIZ];
     BrotliDecoderResult  r = BROTLI_RESULT_ERROR;
-    size_t    available_in = (size_t)RSTRING_LEN(str);
-    const uint8_t* next_in = (uint8_t*)RSTRING_PTR(str);
+    size_t    available_in = args->len;
+    const uint8_t* next_in = args->str;
     size_t   available_out = BUFSIZ;
     uint8_t*      next_out = output;
     size_t       total_out = 0;
-    buffer_t*       buffer = create_buffer(BUFSIZ);
-    VALUE            value = Qnil;
-    BrotliDecoderState*  s = BrotliDecoderCreateInstance(brotli_alloc,
-                                                         brotli_free,
-                                                         NULL);
+    buffer_t*       buffer = args->buffer;
+    BrotliDecoderState*  s = args->s;
+
     for (;;) {
         r = BrotliDecoderDecompressStream(s,
                                           &available_in, &next_in,
@@ -58,22 +63,46 @@ brotli_inflate(VALUE self, VALUE str)
         if (next_out != output) {
             append_buffer(buffer, output, next_out - output);
         }
-        value = rb_str_new(buffer->ptr, buffer->used);
-        delete_buffer(buffer);
-        BrotliDecoderDestroyInstance(s);
-    } else if (r == BROTLI_DECODER_RESULT_ERROR) {
-        const char * error = BrotliDecoderErrorString(BrotliDecoderGetErrorCode(s));
-        delete_buffer(buffer);
-        BrotliDecoderDestroyInstance(s);
+    }
+    args->r = r;
+
+    return arg;
+}
+
+static VALUE
+brotli_inflate(VALUE self, VALUE str)
+{
+    VALUE value = Qnil;
+    brotli_inflate_args_t args;
+
+    StringValue(str);
+
+    args.str = (uint8_t*)RSTRING_PTR(str);
+    args.len = (size_t)RSTRING_LEN(str);
+    args.buffer = create_buffer(BUFSIZ);
+    args.s = BrotliDecoderCreateInstance(brotli_alloc,
+                                         brotli_free,
+                                         NULL);
+    args.r = BROTLI_RESULT_ERROR;
+
+    rb_thread_call_without_gvl(brotli_inflate_no_gvl, (void *)&args, NULL, NULL);
+    if (args.r == BROTLI_DECODER_RESULT_SUCCESS) {
+        value = rb_str_new(args.buffer->ptr, args.buffer->used);
+        delete_buffer(args.buffer);
+        BrotliDecoderDestroyInstance(args.s);
+    } else if (args.r == BROTLI_DECODER_RESULT_ERROR) {
+        const char * error = BrotliDecoderErrorString(BrotliDecoderGetErrorCode(args.s));
+        delete_buffer(args.buffer);
+        BrotliDecoderDestroyInstance(args.s);
         rb_raise(rb_eBrotli, "%s", error);
-    } else if (r == BROTLI_RESULT_NEEDS_MORE_INPUT) {
-        delete_buffer(buffer);
-        BrotliDecoderDestroyInstance(s);
+    } else if (args.r == BROTLI_RESULT_NEEDS_MORE_INPUT) {
+        delete_buffer(args.buffer);
+        BrotliDecoderDestroyInstance(args.s);
         rb_raise(rb_eBrotli, "Needs more input");
-    } else if (r == BROTLI_RESULT_NEEDS_MORE_OUTPUT) {
+    } else if (args.r == BROTLI_RESULT_NEEDS_MORE_OUTPUT) {
         /* never reach to this block */
-        delete_buffer(buffer);
-        BrotliDecoderDestroyInstance(s);
+        delete_buffer(args.buffer);
+        BrotliDecoderDestroyInstance(args.s);
         rb_raise(rb_eBrotli, "Needs more output");
     }
 
@@ -219,7 +248,7 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
 
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
-    args.s   = brotli_deflate_parse_options(
+    args.s = brotli_deflate_parse_options(
         BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL),
         opts);
     args.buffer = create_buffer(BUFSIZ);
