@@ -48,7 +48,7 @@ describe Brotli do
       end
       puts t
       # w/ gvl 1.6123949999455363
-      # wo/ gvl 1.5788109998684376
+      # w/o gvl 1.5788109998684376
     end
 
     it '5 threads' do
@@ -69,7 +69,7 @@ describe Brotli do
       end
       puts t
       # w/ gvl 1.0620850000996143
-      # wo/ gvl 0.40698900003917515
+      # w/o gvl 0.40698900003917515
     end
   end
 end
