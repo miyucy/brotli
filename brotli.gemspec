@@ -13,9 +13,12 @@ Gem::Specification.new do |spec|
   spec.description   = %q{Brotli compressor/decompressor}
   spec.homepage      = "https://github.com/miyucy/brotli"
 
-  spec.files         = `git ls-files -z`.split("\x0").reject { |f| f.match(%r{^(test|spec|features)/}) }
+  spec.test_files    = `git ls-files -z -- spec`.split("\x0")
+  spec.files         = `git ls-files -z`.split("\x0")
+  spec.files        -= spec.test_files
   spec.files        -= ['vendor/brotli']
-  spec.files        += Dir['vendor/brotli/{enc,dec}/*'] + Dir['vendor/brotli/LICENSE']
+  spec.files        += Dir['vendor/brotli/{common,enc,dec}/**/*']
+  spec.files        += ['vendor/brotli/LICENSE']
   spec.bindir        = "exe"
   spec.executables   = spec.files.grep(%r{^exe/}) { |f| File.basename(f) }
   spec.require_paths = ["lib"]
