@@ -2,7 +2,7 @@ require 'spec_helper'
 require 'zlib'
 
 describe Brotli do
-  let!(:data) { File.binread File.join(__dir__, '..', 'vendor', 'brotli', 'tests', 'testdata', 'alice29.txt') }
+  let!(:data) { File.binread File.expand_path(File.join(__dir__, '..', 'vendor', 'brotli', 'tests', 'testdata', 'alice29.txt'), __FILE__) }
 
   context 'deflate/inflate' do
     it 'with example data' do
@@ -82,7 +82,7 @@ describe Brotli do
   end
 
   it 'inflate' do
-    compressed = File.binread File.join(__dir__, '..', 'vendor', 'brotli', 'tests', 'testdata', 'alice29.txt.compressed')
+    compressed = File.binread File.expand_path(File.join(__dir__, '..', 'vendor', 'brotli', 'tests', 'testdata', 'alice29.txt.compressed'), __FILE__)
     expect(Brotli.inflate(compressed)).to eq data
   end
 end
