@@ -22,3 +22,4 @@ deploy:
   on:
     tags: true
     repo: miyucy/brotli
+script: bundle exec rake && ./smoke.sh
