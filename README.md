@@ -22,7 +22,13 @@ Or install it yourself as:
 
 ## Usage
 
-TODO: Write usage instructions here
+```ruby
+require 'brotli'
+compressed = Brotli.deflate(string)
+decompressed = Brotli.inflate(compressed)
+```
+
+See spec/brotli_spec.rb
 
 ## Development
 
