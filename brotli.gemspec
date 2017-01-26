@@ -12,6 +12,7 @@ Gem::Specification.new do |spec|
   spec.summary       = %q{Brotli compressor/decompressor}
   spec.description   = %q{Brotli compressor/decompressor}
   spec.homepage      = "https://github.com/miyucy/brotli"
+  spec.license       = "MIT"
 
   spec.test_files    = `git ls-files -z -- spec`.split("\x0")
   spec.files         = `git ls-files -z`.split("\x0")
