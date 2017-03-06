@@ -32,8 +32,8 @@ File.open('Makefile', 'r+') do |f|
   src = 'ORIG_SRCS = brotli.c buffer.c'
   obj = 'OBJS = brotli.o buffer.o'
   txt = f.read
-        .sub(/^#{src}$/, src + ' ' + srcs.join(' '))
-        .sub(/^#{obj}$/, obj + ' ' + objs.join(' '))
+        .sub(/^ORIG_SRCS = .*$/, src + ' ' + srcs.join(' '))
+        .sub(/^OBJS = .*$/, obj + ' ' + objs.join(' '))
   f.rewind
   f.write txt
 end
