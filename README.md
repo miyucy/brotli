@@ -1,8 +1,11 @@
-# Brotli ![](https://travis-ci.org/miyucy/brotli.svg)
+# Brotli [![](https://travis-ci.org/miyucy/brotli.svg)](https://travis-ci.org/miyucy/brotli)
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/brotli`. To experiment with that code, run `bin/console` for an interactive prompt.
-
-TODO: Delete this and the text above, and describe your gem
+Brotli is a Ruby implementation of the Brotli generic-purpose lossless
+compression algorithm that compresses data using a combination of a modern
+variant of the LZ77 algorithm, Huffman coding and 2nd order context modeling,
+with a compression ratio comparable to the best currently available
+general-purpose compression methods. It is similar in speed with deflate but
+offers more dense compression.
 
 ## Installation
 
