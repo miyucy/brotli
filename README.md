@@ -35,9 +35,7 @@ See spec/brotli_spec.rb
 
 ## Development
 
-After checking out the repo, run `bin/setup` to install dependencies.
-
-`git submodule update --init` to ensure the Brotli dependencies are available.
+After checking out the repo, run `bin/setup` to install bundle and Brotli C library dependencies.
 
 Run `rake build` to build brotli extension for ruby. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
 
