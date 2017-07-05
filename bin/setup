@@ -4,4 +4,5 @@ IFS=$'\n\t'
 
 bundle install
 
-# Do any other automated setup that you need to do here
+# Ensure Brotli library dependencies are available
+git submodule update --init
