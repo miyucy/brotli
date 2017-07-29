@@ -8,11 +8,11 @@ create_makefile('brotli/brotli')
 
 def acopy(dir)
   # source dir
-  FileUtils.mkdir_p File.expand_path(File.join(__dir__, dir))
+  FileUtils.mkdir_p File.expand_path(File.join(File.dirname(__FILE__), dir))
   # object dir
   FileUtils.mkdir_p dir
 
-  files = Dir[File.expand_path(File.join(__dir__, '..', '..', 'vendor', 'brotli', dir, '*.[ch]'))]
+  files = Dir[File.expand_path(File.join(File.dirname(__FILE__), '..', '..', 'vendor', 'brotli', dir, '*.[ch]'))]
   FileUtils.cp files, dir, verbose: true
 
   srcs = files.map { |e| File.basename e }.select { |e| e.end_with? '.c' }.map { |e| File.join(dir, e) }
