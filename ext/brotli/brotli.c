@@ -85,7 +85,11 @@ brotli_inflate(VALUE self, VALUE str)
                                          NULL);
     args.r = BROTLI_RESULT_ERROR;
 
+#ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(brotli_inflate_no_gvl, (void *)&args, NULL, NULL);
+#else
+    brotli_inflate_no_gvl((void *)&args);
+#endif
     if (args.r == BROTLI_DECODER_RESULT_SUCCESS) {
         value = rb_str_new(args.buffer->ptr, args.buffer->used);
         delete_buffer(args.buffer);
