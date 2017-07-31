@@ -258,7 +258,11 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     args.buffer = create_buffer(BUFSIZ);
     args.finished = BROTLI_FALSE;
 
+#ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(brotli_deflate_no_gvl, (void *)&args, NULL, NULL);
+#else
+    brotli_deflate_no_gvl((void *)&args);
+#endif
     if (args.finished == BROTLI_TRUE) {
         value = rb_str_new(args.buffer->ptr, args.buffer->used);
     }
