@@ -5,7 +5,7 @@ require 'thread'
 describe Brotli do
   context 'deflate' do
     let(:sample) { 10 }
-    let(:datum) { File.binread File.expand_path(File.join(__dir__, '..', 'vendor', 'brotli', 'tests', 'testdata', 'lcet10.txt'), __FILE__) }
+    let(:datum) { File.binread File.expand_path(File.join(File.dirname(__FILE__), '..', 'vendor', 'brotli', 'tests', 'testdata', 'lcet10.txt'), __FILE__) }
     let!(:data) { sample.times.map { datum.dup } }
 
     it 'seq' do
@@ -39,7 +39,7 @@ describe Brotli do
 
   context 'inflate' do
     let(:sample) { 1000 }
-    let(:datum) { File.binread File.expand_path(File.join(__dir__, '..', 'vendor', 'brotli', 'tests', 'testdata', 'lcet10.txt.compressed'), __FILE__) }
+    let(:datum) { File.binread File.expand_path(File.join(File.dirname(__FILE__), '..', 'vendor', 'brotli', 'tests', 'testdata', 'lcet10.txt.compressed'), __FILE__) }
     let!(:data) { sample.times.map { datum.dup } }
 
     it 'seq' do
