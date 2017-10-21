@@ -8,8 +8,8 @@
 #include "ruby/thread.h"
 #endif
 
-#include "enc/encode.h"
-#include "dec/decode.h"
+#include "brotli/encode.h"
+#include "brotli/decode.h"
 #include "buffer.h"
 
 #endif /* BROTLI_H */
