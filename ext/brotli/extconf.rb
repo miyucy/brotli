@@ -3,29 +3,22 @@ require 'fileutils'
 require 'rbconfig'
 
 $CPPFLAGS << ' -DOS_MACOSX' if RbConfig::CONFIG['host_os'] =~ /darwin|mac os/
-$INCFLAGS << ' -I./enc -I./dec -I./common'
+$INCFLAGS << ' -I$(srcdir)/enc -I$(srcdir)/dec -I$(srcdir)/common -I$(srcdir)/include'
 create_makefile('brotli/brotli')
 
-def acopy(dir)
-  # source dir
-  FileUtils.mkdir_p File.expand_path(File.join(File.dirname(__FILE__), dir))
-  # object dir
-  FileUtils.mkdir_p dir
+__DIR__ = File.expand_path(File.dirname __FILE__)
 
-  files = Dir[File.expand_path(File.join(File.dirname(__FILE__), '..', '..', 'vendor', 'brotli', dir, '*.[ch]'))]
-  FileUtils.cp files, dir, verbose: true
-
-  srcs = files.map { |e| File.basename e }.select { |e| e.end_with? '.c' }.map { |e| File.join(dir, e) }
-  objs = srcs.map { |e| e.sub(/\.c\z/, '.' + $OBJEXT) }
-  [srcs, objs]
+%w[enc dec common include].each do |dirname|
+  FileUtils.mkdir dirname
+  FileUtils.cp_r File.expand_path(File.join(__DIR__, '..', '..', 'vendor', 'brotli', 'c', dirname), __DIR__), __DIR__, verbose: true
 end
 
 srcs = []
 objs = []
-%w(enc dec common).each do |dir|
-  a, b = acopy dir
-  srcs.concat a
-  objs.concat b
+Dir[File.expand_path(File.join('{enc,dec,common,include}', '**', '*.c'), __DIR__)].sort.each do |file|
+  file[__DIR__ + File::SEPARATOR] = ''
+  srcs << file
+  objs << file.sub(/\.c\z/, '.' + RbConfig::CONFIG['OBJEXT'])
 end
 
 File.open('Makefile', 'r+') do |f|
