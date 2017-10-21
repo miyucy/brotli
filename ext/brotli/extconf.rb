@@ -9,7 +9,7 @@ create_makefile('brotli/brotli')
 __DIR__ = File.expand_path(File.dirname __FILE__)
 
 %w[enc dec common include].each do |dirname|
-  FileUtils.mkdir dirname
+  FileUtils.mkdir_p dirname
   FileUtils.cp_r File.expand_path(File.join(__DIR__, '..', '..', 'vendor', 'brotli', 'c', dirname), __DIR__), __DIR__, verbose: true
 end
 
