@@ -36,7 +36,7 @@ brotli_inflate_no_gvl(void *arg)
 {
     brotli_inflate_args_t *args = (brotli_inflate_args_t*)arg;
     uint8_t         output[BUFSIZ];
-    BrotliDecoderResult  r = BROTLI_RESULT_ERROR;
+    BrotliDecoderResult  r = BROTLI_DECODER_RESULT_ERROR;
     size_t    available_in = args->len;
     const uint8_t* next_in = args->str;
     size_t   available_out = BUFSIZ;
@@ -83,7 +83,7 @@ brotli_inflate(VALUE self, VALUE str)
     args.s = BrotliDecoderCreateInstance(brotli_alloc,
                                          brotli_free,
                                          NULL);
-    args.r = BROTLI_RESULT_ERROR;
+    args.r = BROTLI_DECODER_RESULT_ERROR;
 
 #ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(brotli_inflate_no_gvl, (void *)&args, NULL, NULL);
@@ -99,11 +99,11 @@ brotli_inflate(VALUE self, VALUE str)
         delete_buffer(args.buffer);
         BrotliDecoderDestroyInstance(args.s);
         rb_raise(rb_eBrotli, "%s", error);
-    } else if (args.r == BROTLI_RESULT_NEEDS_MORE_INPUT) {
+    } else if (args.r == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT) {
         delete_buffer(args.buffer);
         BrotliDecoderDestroyInstance(args.s);
         rb_raise(rb_eBrotli, "Needs more input");
-    } else if (args.r == BROTLI_RESULT_NEEDS_MORE_OUTPUT) {
+    } else if (args.r == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
         /* never reach to this block */
         delete_buffer(args.buffer);
         BrotliDecoderDestroyInstance(args.s);
