@@ -9,7 +9,7 @@ rvm:
   - 2.2.8
   - 2.3.5
   - 2.4.2
-  - 2.5.0-preview1
+  - 2.5.1
 env:
   global:
     - RANTLY_COUNT=10000
@@ -25,6 +25,3 @@ deploy:
     tags: true
     repo: miyucy/brotli
 script: bundle exec rake && ./smoke.sh
-matrix:
-  allow_failures:
-    - rvm: 2.5.0-preview1
