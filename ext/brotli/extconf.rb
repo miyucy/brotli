@@ -22,8 +22,9 @@ Dir[File.expand_path(File.join('{enc,dec,common,include}', '**', '*.c'), __DIR__
 end
 
 File.open('Makefile', 'r+') do |f|
+  obj_ext = RbConfig::CONFIG['OBJEXT']
   src = 'ORIG_SRCS = brotli.c buffer.c'
-  obj = 'OBJS = brotli.o buffer.o'
+  obj = "OBJS = brotli.#{obj_ext} buffer.#{obj_ext}"
   txt = f.read
         .sub(/^ORIG_SRCS = .*$/, src + ' ' + srcs.join(' '))
         .sub(/^OBJS = .*$/, obj + ' ' + objs.join(' '))
