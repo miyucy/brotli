@@ -34,13 +34,7 @@ static
 buffer_t*
 expand_buffer(buffer_t* const buffer, const size_t need) {
     size_t size = need * buffer->expand_ratio / 100;
-    uint8_t* ptr = malloc(size);
-    if (ptr == NULL) {
-        return NULL;
-    }
-    memcpy(ptr, buffer->ptr, buffer->size);
-    free(buffer->ptr);
-    buffer->ptr = ptr;
+    buffer->ptr = realloc(buffer->ptr, size);
     buffer->size = size;
     buffer->expand_count += 1;
     return buffer;

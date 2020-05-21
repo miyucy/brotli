@@ -5,7 +5,7 @@
 #include <string.h>
 
 typedef struct {
-    uint8_t* ptr;
+    char* ptr;
     size_t size;
     size_t used;
     size_t expand_ratio;

@@ -138,11 +138,10 @@ brotli_deflate_set_mode(BrotliEncoderState* s, VALUE value)
 static void
 brotli_deflate_set_quality(BrotliEncoderState* s, VALUE value)
 {
-    uint32_t param;
     if (NIL_P(value)) {
         return;
     } else {
-        param = NUM2INT(value);
+        int32_t param = NUM2INT(value);
         if (0 <= param && param <= 11) {
             BrotliEncoderSetParameter(s, BROTLI_PARAM_QUALITY, param);
         } else {
@@ -154,11 +153,10 @@ brotli_deflate_set_quality(BrotliEncoderState* s, VALUE value)
 static void
 brotli_deflate_set_lgwin(BrotliEncoderState* s, VALUE value)
 {
-    uint32_t param;
     if (NIL_P(value)) {
         return;
     } else {
-        param = NUM2INT(value);
+        int32_t param = NUM2INT(value);
         if (10 <= param && param <= 24) {
             BrotliEncoderSetParameter(s, BROTLI_PARAM_LGWIN, param);
         } else {
@@ -170,11 +168,10 @@ brotli_deflate_set_lgwin(BrotliEncoderState* s, VALUE value)
 static void
 brotli_deflate_set_lgblock(BrotliEncoderState* s, VALUE value)
 {
-    uint32_t param;
     if (NIL_P(value)) {
         return;
     } else {
-        param = NUM2INT(value);
+        int32_t param = NUM2INT(value);
         if ((param == 0) || (16 <= param && param <= 24)) {
             BrotliEncoderSetParameter(s, BROTLI_PARAM_LGBLOCK, param);
         } else {
