@@ -4,18 +4,19 @@
 
 static VALUE rb_mBrotli;
 static VALUE rb_eBrotli;
+static VALUE rb_Writer;
 
-static void*
+static inline void*
 brotli_alloc(void* opaque, size_t size)
 {
-    return malloc(size);
+    return ruby_xmalloc(size);
 }
 
-static void
+static inline void
 brotli_free(void* opaque, void* address)
 {
     if (address) {
-        free(address);
+        ruby_xfree(address);
     }
 }
 
@@ -265,6 +266,10 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     brotli_deflate_args_t args;
 
     rb_scan_args(argc, argv, "11", &str, &opts);
+    if (NIL_P(str)) {
+        rb_raise(rb_eArgError, "input should not be nil");
+        return Qnil;
+    }
     StringValue(str);
 
     args.str = (uint8_t*)RSTRING_PTR(str);
@@ -290,6 +295,177 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     return value;
 }
 
+static VALUE brotli_version(VALUE klass) {
+    uint32_t ver = BrotliEncoderVersion();
+    char version[255];
+    snprintf(version, sizeof(version), "%u.%u.%u", ver >> 24, (ver >> 12) & 0xFFF, ver & 0xFFF);
+    return rb_str_new2(version);
+}
+
+static ID id_write, id_flush, id_close;
+
+struct brotli {
+    VALUE io;
+    BrotliEncoderState* state;
+};
+
+static void br_mark(void *p)
+{
+    struct brotli *br = p;
+    rb_gc_mark(br->io);
+}
+
+static void br_free(void *p)
+{
+    struct brotli* br = p;
+    BrotliEncoderDestroyInstance(br->state);
+    br->state = NULL;
+    br->io = Qnil;
+    ruby_xfree(br);
+}
+
+static size_t br_memsize(const void *p)
+{
+    return sizeof(struct brotli);
+}
+
+static const rb_data_type_t brotli_data_type = {
+    "brotli",
+    { br_mark, br_free, br_memsize },
+    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
+};
+
+typedef struct {
+    BrotliEncoderState* state;
+    BrotliEncoderOperation op;
+    size_t available_in;
+    const uint8_t* next_in;
+} brotli_encoder_args_t;
+
+static void* compress_no_gvl(void *ptr) {
+    brotli_encoder_args_t *args = ptr;
+    size_t zero = 0;
+    if (!BrotliEncoderCompressStream(args->state, args->op,
+                                     &args->available_in, &args->next_in,
+                                     &zero, NULL, NULL)) {
+        rb_raise(rb_eBrotli, "BrotliEncoderCompressStream failed");
+    }
+    return NULL;
+}
+
+static size_t push_output(struct brotli *br) {
+    size_t len = 0;
+    if (BrotliEncoderHasMoreOutput(br->state)) {
+        const uint8_t* out = BrotliEncoderTakeOutput(br->state, &len);
+        if (len > 0) {
+            rb_funcall(br->io, id_write, 1, rb_str_new((const char*)out, len));
+        }
+    }
+    return len;
+}
+
+static VALUE rb_writer_alloc(VALUE klass) {
+    struct brotli *br;
+    VALUE obj = TypedData_Make_Struct(klass, struct brotli, &brotli_data_type, br);
+    br->io = Qnil;
+    br->state = BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL);
+    if (!br->state) {
+        rb_raise(rb_eNoMemError, "BrotliEncoderCreateInstance failed");
+        return Qnil;
+    }
+    return obj;
+}
+
+static VALUE rb_writer_initialize(int argc, VALUE* argv, VALUE self) {
+    VALUE io = Qnil;
+    VALUE opts = Qnil;
+    rb_scan_args(argc, argv, "11", &io, &opts);
+    if (NIL_P(io)) {
+        rb_raise(rb_eArgError, "io should not be nil");
+        return Qnil;
+    }
+
+    struct brotli *br;
+    TypedData_Get_Struct(self, struct brotli, &brotli_data_type, br);
+    brotli_deflate_parse_options(br->state, opts);
+    br->io = io;
+    return self;
+}
+
+static VALUE rb_writer_write(VALUE self, VALUE buf) {
+    struct brotli* br;
+    TypedData_Get_Struct(self, struct brotli, &brotli_data_type, br);
+    StringValue(buf);
+
+    const size_t total = (size_t)RSTRING_LEN(buf);
+
+    brotli_encoder_args_t args = {
+        .state = br->state,
+        .op = BROTLI_OPERATION_PROCESS,
+        .available_in = total,
+        .next_in = (uint8_t*)RSTRING_PTR(buf)
+    };
+
+    while (args.available_in > 0) {
+        rb_thread_call_without_gvl(compress_no_gvl, (void*)&args, NULL, NULL);
+        push_output(br);
+    }
+
+    return SIZET2NUM(total);
+}
+
+static VALUE rb_writer_finish(VALUE self) {
+    struct brotli* br;
+    TypedData_Get_Struct(self, struct brotli, &brotli_data_type, br);
+
+    brotli_encoder_args_t args = {
+        .state = br->state,
+        .op = BROTLI_OPERATION_FINISH,
+        .available_in = 0,
+        .next_in = NULL
+    };
+
+    while (!BrotliEncoderIsFinished(br->state)) {
+        rb_thread_call_without_gvl(compress_no_gvl, (void*)&args, NULL, NULL);
+        push_output(br);
+    }
+    return br->io;
+}
+
+static VALUE rb_writer_flush(VALUE self) {
+    struct brotli *br;
+    TypedData_Get_Struct(self, struct brotli, &brotli_data_type, br);
+
+    brotli_encoder_args_t args = {
+        .state = br->state,
+        .op = BROTLI_OPERATION_FLUSH,
+        .available_in = 0,
+        .next_in = NULL
+    };
+
+    do  {
+        rb_thread_call_without_gvl(compress_no_gvl, (void*)&args, NULL, NULL);
+        push_output(br);
+    } while (BrotliEncoderHasMoreOutput(br->state));
+
+    if (rb_respond_to(br->io, id_flush)) {
+        rb_funcall(br->io, id_flush, 0);
+    }
+    return self;
+}
+
+static VALUE rb_writer_close(VALUE self) {
+    struct brotli* br;
+    TypedData_Get_Struct(self, struct brotli, &brotli_data_type, br);
+
+    rb_writer_finish(self);
+
+    if (rb_respond_to(br->io, id_close)) {
+        rb_funcall(br->io, id_close, 0);
+    }
+    return br->io;
+}
+
 /*******************************************************************************
  * entry
  ******************************************************************************/
@@ -301,4 +477,16 @@ Init_brotli(void)
     rb_eBrotli = rb_define_class_under(rb_mBrotli, "Error", rb_eStandardError);
     rb_define_singleton_method(rb_mBrotli, "deflate", RUBY_METHOD_FUNC(brotli_deflate), -1);
     rb_define_singleton_method(rb_mBrotli, "inflate", RUBY_METHOD_FUNC(brotli_inflate), 1);
+    rb_define_singleton_method(rb_mBrotli, "version", RUBY_METHOD_FUNC(brotli_version), 0);
+    // Brotli::Writer
+    id_write = rb_intern("write");
+    id_flush = rb_intern("flush");
+    id_close = rb_intern("close");
+    rb_Writer = rb_define_class_under(rb_mBrotli, "Writer", rb_cObject);
+    rb_define_alloc_func(rb_Writer, rb_writer_alloc);
+    rb_define_method(rb_Writer, "initialize", RUBY_METHOD_FUNC(rb_writer_initialize), -1);
+    rb_define_method(rb_Writer, "write", RUBY_METHOD_FUNC(rb_writer_write), 1);
+    rb_define_method(rb_Writer, "finish", RUBY_METHOD_FUNC(rb_writer_finish), 0);
+    rb_define_method(rb_Writer, "flush", RUBY_METHOD_FUNC(rb_writer_flush), 0);
+    rb_define_method(rb_Writer, "close", RUBY_METHOD_FUNC(rb_writer_close), 0);
 }
