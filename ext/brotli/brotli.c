@@ -2,9 +2,7 @@
 
 #define CSTR2SYM(x) ID2SYM(rb_intern(x))
 
-static VALUE rb_mBrotli;
 static VALUE rb_eBrotli;
-static VALUE rb_Writer;
 
 static inline void*
 brotli_alloc(void* opaque, size_t size)
@@ -473,8 +471,11 @@ static VALUE rb_writer_close(VALUE self) {
 void
 Init_brotli(void)
 {
+    VALUE rb_mBrotli;
+    VALUE rb_Writer;
     rb_mBrotli = rb_define_module("Brotli");
     rb_eBrotli = rb_define_class_under(rb_mBrotli, "Error", rb_eStandardError);
+    rb_gc_mark(rb_eBrotli);
     rb_define_singleton_method(rb_mBrotli, "deflate", RUBY_METHOD_FUNC(brotli_deflate), -1);
     rb_define_singleton_method(rb_mBrotli, "inflate", RUBY_METHOD_FUNC(brotli_inflate), 1);
     rb_define_singleton_method(rb_mBrotli, "version", RUBY_METHOD_FUNC(brotli_version), 0);
