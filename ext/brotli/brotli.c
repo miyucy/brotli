@@ -239,26 +239,6 @@ brotli_deflate_no_gvl(void *arg)
     return arg;
 }
 
-/*
- * call-seq:
- *     Brotli.deflate(str, opts=nil) -> String
- * @param [String] str
- *   string
- * @param [Hash] opts
- *   options
- * @option opts [Symbol] :mode
- *   Deflate mode
- *   * :generic
- *   * :text
- *   * :font
- * @option opts [Integer] :quality
- *   quality 0-11
- * @option opts [Integer] :lgwin
- *   lgwin 10-24
- * @option opts [Integer] :lgblock
- *   lgblock 16-24 or 0
- * @return [String] Deflated string
- */
 static VALUE
 brotli_deflate(int argc, VALUE *argv, VALUE self)
 {
