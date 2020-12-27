@@ -20,7 +20,7 @@ jobs:
         bundler-cache: true
     - name: Run the default task
       run: |
-        bundle exec rake clobber clean compile spec build
+        bundle exec rake clobber test build
         gem install --no-document "$(ls pkg/brotli-*.gem)"
         cat <<EOF | ruby
         require "brotli"
