@@ -273,12 +273,20 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     return value;
 }
 
+/*******************************************************************************
+ * version
+ ******************************************************************************/
+
 static VALUE brotli_version(VALUE klass) {
     uint32_t ver = BrotliEncoderVersion();
     char version[255];
     snprintf(version, sizeof(version), "%u.%u.%u", ver >> 24, (ver >> 12) & 0xFFF, ver & 0xFFF);
     return rb_str_new2(version);
 }
+
+/*******************************************************************************
+ * Writer
+ ******************************************************************************/
 
 static ID id_write, id_flush, id_close;
 
@@ -451,11 +459,15 @@ static VALUE rb_writer_close(VALUE self) {
 void
 Init_brotli(void)
 {
+#if HAVE_RB_EXT_RACTOR_SAFE
+    rb_ext_ractor_safe(true);
+#endif
+
     VALUE rb_mBrotli;
     VALUE rb_Writer;
     rb_mBrotli = rb_define_module("Brotli");
     rb_eBrotli = rb_define_class_under(rb_mBrotli, "Error", rb_eStandardError);
-    rb_gc_mark(rb_eBrotli);
+    rb_global_variable(&rb_eBrotli);
     rb_define_singleton_method(rb_mBrotli, "deflate", RUBY_METHOD_FUNC(brotli_deflate), -1);
     rb_define_singleton_method(rb_mBrotli, "inflate", RUBY_METHOD_FUNC(brotli_inflate), 1);
     rb_define_singleton_method(rb_mBrotli, "version", RUBY_METHOD_FUNC(brotli_version), 0);
