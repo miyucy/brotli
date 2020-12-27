@@ -14,8 +14,7 @@ Gem::Specification.new do |spec|
   spec.homepage      = "https://github.com/miyucy/brotli"
   spec.license       = "MIT"
 
-  spec.test_files    = `git ls-files -z -- spec`.split("\x0")
-  spec.test_files   += `git ls-files -z -- test`.split("\x0")
+  spec.test_files    = `git ls-files -z -- test`.split("\x0")
   spec.files         = `git ls-files -z`.split("\x0")
   spec.files        -= spec.test_files
   spec.files        -= ["vendor/brotli"]
