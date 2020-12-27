@@ -4,4 +4,3 @@ source 'https://rubygems.org'
 gemspec
 
 gem 'travis'
-gem 'yard'
