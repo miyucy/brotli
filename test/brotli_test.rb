@@ -3,6 +3,12 @@
 require "test_helper"
 
 class BrotliTest < Test::Unit::TestCase
+  def testdata
+    @testdata ||= File.binread(
+      File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata", "alice29.txt"), __dir__)
+    )
+  end
+
   test "VERSION" do
     assert do
       ::Brotli.const_defined?(:VERSION)
@@ -22,12 +28,6 @@ class BrotliTest < Test::Unit::TestCase
   end
 
   sub_test_case ".deflate" do
-    def testdata
-      @testdata ||= File.binread(
-        File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata", "alice29.txt"), __dir__)
-      )
-    end
-
     test "works" do
       property_of {
         [choose(nil, :generic, :text, :font), range(0, 11), range(10, 24), range(16, 24)]
@@ -64,19 +64,41 @@ class BrotliTest < Test::Unit::TestCase
   end
 
   sub_test_case ".inflate" do
-    data do
-      path = Pathname.new(
-        File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata"), __dir__)
+    def testdata2
+      @testdata2 ||= File.binread(
+        File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata", "alice29.txt.compressed"), __dir__)
       )
-      {
-        "alice29.txt" => [
-          (path + "alice29.txt").binread,
-          (path + "alice29.txt.compressed").binread
-        ]
-      }
     end
-    test "works" do |(raw, compressed)|
-      assert_equal raw, Brotli.inflate(compressed)
+
+    test "works" do
+      assert_equal testdata, Brotli.inflate(testdata2)
+    end
+
+    test "raise error when pass insufficient data" do
+      assert_raise Brotli::Error do
+        Brotli.inflate(testdata2[0, 64])
+      end
+    end
+
+    test "raise error when pass invalid data" do
+      assert_raise Brotli::Error do
+        Brotli.inflate(testdata2.reverse)
+      end
+    end
+  end
+
+  sub_test_case "Ractor safe" do
+    test "able to invoke non-main ractor" do
+      unless defined? ::Ractor
+        notify "Ractor not defined"
+        omit
+      end
+      ractors = Array.new(2) do
+        Ractor.new(testdata) do |testdata|
+          Brotli.inflate(Brotli.deflate(testdata)) == testdata
+        end
+      end
+      assert_equal [true, true], ractors.map(&:take)
     end
   end
 end
