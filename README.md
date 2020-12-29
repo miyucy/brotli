@@ -1,4 +1,4 @@
-# Brotli [![](https://travis-ci.org/miyucy/brotli.svg)](https://travis-ci.org/miyucy/brotli)
+# Brotli
 
 Brotli is a Ruby implementation of the Brotli generic-purpose lossless
 compression algorithm that compresses data using a combination of a modern
@@ -31,7 +31,7 @@ compressed = Brotli.deflate(string)
 decompressed = Brotli.inflate(compressed)
 ```
 
-See spec/brotli_spec.rb
+See test/brotli_test.rb
 
 ## Development
 
