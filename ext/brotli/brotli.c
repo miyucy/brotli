@@ -183,6 +183,7 @@ static BrotliEncoderState*
 brotli_deflate_parse_options(BrotliEncoderState* s, VALUE opts)
 {
     if (!NIL_P(opts)) {
+        Check_Type(opts, T_HASH);
         brotli_deflate_set_mode(s, rb_hash_aref(opts, CSTR2SYM("mode")));
         brotli_deflate_set_quality(s, rb_hash_aref(opts, CSTR2SYM("quality")));
         brotli_deflate_set_lgwin(s, rb_hash_aref(opts, CSTR2SYM("lgwin")));

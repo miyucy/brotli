@@ -60,6 +60,9 @@ class BrotliTest < Test::Unit::TestCase
       assert_raise ArgumentError do
         Brotli.deflate(testdata, lgblock: 25)
       end
+      assert_raise TypeError do
+        Brotli.deflate(testdata, 42)
+      end
     end
   end
 
