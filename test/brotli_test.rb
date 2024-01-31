@@ -23,7 +23,7 @@ class BrotliTest < Test::Unit::TestCase
 
   sub_test_case ".version" do
     test "returns string" do
-      assert_equal "1.0.9", Brotli.version
+      assert_equal "1.1.0", Brotli.version
     end
   end
 
