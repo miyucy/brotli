@@ -13,6 +13,11 @@ have_dev_pkg = [
   pkg_config("libbrotlienc")
 ].all? { |e| e }
 
+if enable_config("vendor")
+  have_dev_pkg = false
+  Logging::message "Use vendor brotli\n"
+end
+
 $CPPFLAGS << " -DOS_MACOSX" if RbConfig::CONFIG["host_os"] =~ /darwin|mac os/
 $INCFLAGS << " -I$(srcdir)/enc -I$(srcdir)/dec -I$(srcdir)/common -I$(srcdir)/include" unless have_dev_pkg
 
@@ -22,6 +27,7 @@ unless have_dev_pkg
   __DIR__ = File.expand_path(File.dirname(__FILE__))
 
   %w[enc dec common include].each do |dirname|
+    FileUtils.rm_rf dirname
     FileUtils.mkdir_p dirname
     FileUtils.cp_r(
       File.expand_path(File.join(__DIR__, "..", "..", "vendor", "brotli", "c", dirname), __DIR__),
