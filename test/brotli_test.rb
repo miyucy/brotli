@@ -77,6 +77,16 @@ class BrotliTest < Test::Unit::TestCase
       assert_equal testdata, Brotli.inflate(testdata2)
     end
 
+    test "works with StringIO" do
+      testdata3 = StringIO.new testdata2
+      assert_equal testdata, Brotli.inflate(testdata3)
+    end
+
+    test "works with File" do
+      f = File.open(File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata", "alice29.txt.compressed"), __dir__))
+      assert_equal testdata, Brotli.inflate(f)
+    end
+
     test "raise error when pass insufficient data" do
       assert_raise Brotli::Error do
         Brotli.inflate(testdata2[0, 64])
