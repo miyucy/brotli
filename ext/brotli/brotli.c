@@ -68,11 +68,17 @@ brotli_inflate_no_gvl(void *arg)
     return arg;
 }
 
+static ID id_read;
+
 static VALUE
 brotli_inflate(VALUE self, VALUE str)
 {
     VALUE value = Qnil;
     brotli_inflate_args_t args;
+
+    if (rb_respond_to(str, id_read)) {
+      str = rb_funcall(str, id_read, 0, 0);
+    }
 
     StringValue(str);
 
@@ -472,6 +478,7 @@ Init_brotli(void)
     rb_define_singleton_method(rb_mBrotli, "deflate", RUBY_METHOD_FUNC(brotli_deflate), -1);
     rb_define_singleton_method(rb_mBrotli, "inflate", RUBY_METHOD_FUNC(brotli_inflate), 1);
     rb_define_singleton_method(rb_mBrotli, "version", RUBY_METHOD_FUNC(brotli_version), 0);
+    id_read = rb_intern("read");
     // Brotli::Writer
     id_write = rb_intern("write");
     id_flush = rb_intern("flush");
