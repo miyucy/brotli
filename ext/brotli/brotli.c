@@ -475,9 +475,9 @@ Init_brotli(void)
     rb_mBrotli = rb_define_module("Brotli");
     rb_eBrotli = rb_define_class_under(rb_mBrotli, "Error", rb_eStandardError);
     rb_global_variable(&rb_eBrotli);
-    rb_define_singleton_method(rb_mBrotli, "deflate", RUBY_METHOD_FUNC(brotli_deflate), -1);
-    rb_define_singleton_method(rb_mBrotli, "inflate", RUBY_METHOD_FUNC(brotli_inflate), 1);
-    rb_define_singleton_method(rb_mBrotli, "version", RUBY_METHOD_FUNC(brotli_version), 0);
+    rb_define_singleton_method(rb_mBrotli, "deflate", brotli_deflate, -1);
+    rb_define_singleton_method(rb_mBrotli, "inflate", brotli_inflate, 1);
+    rb_define_singleton_method(rb_mBrotli, "version", brotli_version, 0);
     id_read = rb_intern("read");
     // Brotli::Writer
     id_write = rb_intern("write");
@@ -485,9 +485,9 @@ Init_brotli(void)
     id_close = rb_intern("close");
     rb_Writer = rb_define_class_under(rb_mBrotli, "Writer", rb_cObject);
     rb_define_alloc_func(rb_Writer, rb_writer_alloc);
-    rb_define_method(rb_Writer, "initialize", RUBY_METHOD_FUNC(rb_writer_initialize), -1);
-    rb_define_method(rb_Writer, "write", RUBY_METHOD_FUNC(rb_writer_write), 1);
-    rb_define_method(rb_Writer, "finish", RUBY_METHOD_FUNC(rb_writer_finish), 0);
-    rb_define_method(rb_Writer, "flush", RUBY_METHOD_FUNC(rb_writer_flush), 0);
-    rb_define_method(rb_Writer, "close", RUBY_METHOD_FUNC(rb_writer_close), 0);
+    rb_define_method(rb_Writer, "initialize", rb_writer_initialize, -1);
+    rb_define_method(rb_Writer, "write", rb_writer_write, 1);
+    rb_define_method(rb_Writer, "finish", rb_writer_finish, 0);
+    rb_define_method(rb_Writer, "flush", rb_writer_flush, 0);
+    rb_define_method(rb_Writer, "close", rb_writer_close, 0);
 }
