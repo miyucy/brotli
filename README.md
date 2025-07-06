@@ -25,13 +25,62 @@ Or install it yourself as:
 
 ## Usage
 
+### Basic Compression/Decompression
+
 ```ruby
 require 'brotli'
 compressed = Brotli.deflate(string)
 decompressed = Brotli.inflate(compressed)
 ```
 
-See test/brotli_test.rb
+### Custom Dictionary Support
+
+Brotli supports using custom dictionaries to improve compression ratio when you have repetitive data patterns:
+
+```ruby
+# Using a dictionary that contains common patterns in your data
+dictionary = "common patterns in my data"
+data = "This text contains common patterns in my data multiple times"
+
+# Compress with dictionary
+compressed = Brotli.deflate(data, dictionary: dictionary)
+
+# Decompress with the same dictionary
+decompressed = Brotli.inflate(compressed, dictionary: dictionary)
+```
+
+### Compression Options
+
+```ruby
+# Combine dictionary with other compression options
+compressed = Brotli.deflate(data,
+  dictionary: dictionary,
+  quality: 11,        # 0-11, higher = better compression but slower
+  mode: :text,        # :generic (default), :text, or :font
+  lgwin: 22,          # window size (10-24)
+  lgblock: 0          # block size (0 or 16-24)
+)
+```
+
+### Streaming Compression with Writer
+
+```ruby
+# Basic usage
+File.open('output.br', 'wb') do |file|
+  writer = Brotli::Writer.new(file)
+  writer.write(data)
+  writer.close
+end
+
+# With dictionary
+File.open('output.br', 'wb') do |file|
+  writer = Brotli::Writer.new(file, dictionary: dictionary)
+  writer.write(data)
+  writer.close
+end
+```
+
+See test/brotli_test.rb for more examples.
 
 ## Development
 

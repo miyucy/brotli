@@ -28,6 +28,8 @@ typedef struct {
     BrotliDecoderState* s;
     buffer_t* buffer;
     BrotliDecoderResult r;
+    uint8_t* dict;
+    size_t dict_len;
 } brotli_inflate_args_t;
 
 static void*
@@ -43,6 +45,12 @@ brotli_inflate_no_gvl(void *arg)
     size_t       total_out = 0;
     buffer_t*       buffer = args->buffer;
     BrotliDecoderState*  s = args->s;
+
+    /* Attach dictionary if provided */
+    if (args->dict && args->dict_len > 0) {
+        BrotliDecoderAttachDictionary(s, BROTLI_SHARED_DICTIONARY_RAW,
+                                      args->dict_len, args->dict);
+    }
 
     for (;;) {
         r = BrotliDecoderDecompressStream(s,
@@ -71,16 +79,24 @@ brotli_inflate_no_gvl(void *arg)
 static ID id_read;
 
 static VALUE
-brotli_inflate(VALUE self, VALUE str)
+brotli_inflate(int argc, VALUE *argv, VALUE self)
 {
-    VALUE value = Qnil;
+    VALUE str = Qnil, opts = Qnil, value = Qnil, dict = Qnil;
     brotli_inflate_args_t args;
+
+    rb_scan_args(argc, argv, "11", &str, &opts);
 
     if (rb_respond_to(str, id_read)) {
       str = rb_funcall(str, id_read, 0, 0);
     }
 
     StringValue(str);
+
+    /* Extract dictionary from options if provided */
+    if (!NIL_P(opts)) {
+        Check_Type(opts, T_HASH);
+        dict = rb_hash_aref(opts, CSTR2SYM("dictionary"));
+    }
 
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
@@ -89,6 +105,16 @@ brotli_inflate(VALUE self, VALUE str)
                                          brotli_free,
                                          NULL);
     args.r = BROTLI_DECODER_RESULT_ERROR;
+
+    /* Set dictionary parameters */
+    if (!NIL_P(dict)) {
+        StringValue(dict);
+        args.dict = (uint8_t*)RSTRING_PTR(dict);
+        args.dict_len = (size_t)RSTRING_LEN(dict);
+    } else {
+        args.dict = NULL;
+        args.dict_len = 0;
+    }
 
 #ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(brotli_inflate_no_gvl, (void *)&args, NULL, NULL);
@@ -205,6 +231,8 @@ typedef struct {
     BrotliEncoderState* s;
     buffer_t* buffer;
     BROTLI_BOOL finished;
+    uint8_t *dict;
+    size_t dict_len;
 } brotli_deflate_args_t;
 
 static void*
@@ -220,6 +248,17 @@ brotli_deflate_no_gvl(void *arg)
     size_t       total_out = 0;
     buffer_t*       buffer = args->buffer;
     BrotliEncoderState*  s = args->s;
+
+    /* Attach dictionary if provided */
+    if (args->dict && args->dict_len > 0) {
+        BrotliEncoderPreparedDictionary* dict = BrotliEncoderPrepareDictionary(
+            BROTLI_SHARED_DICTIONARY_RAW, args->dict_len, args->dict,
+            BROTLI_MAX_QUALITY, brotli_alloc, brotli_free, NULL);
+        if (dict) {
+            BrotliEncoderAttachPreparedDictionary(s, dict);
+            /* Note: dict is owned by encoder after attach, no need to free */
+        }
+    }
 
     for (;;) {
         r = BrotliEncoderCompressStream(s,
@@ -247,7 +286,7 @@ brotli_deflate_no_gvl(void *arg)
 static VALUE
 brotli_deflate(int argc, VALUE *argv, VALUE self)
 {
-    VALUE str = Qnil, opts = Qnil, value = Qnil;
+    VALUE str = Qnil, opts = Qnil, value = Qnil, dict = Qnil;
     brotli_deflate_args_t args;
 
     rb_scan_args(argc, argv, "11", &str, &opts);
@@ -257,6 +296,12 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     }
     StringValue(str);
 
+    /* Extract dictionary from options if provided */
+    if (!NIL_P(opts)) {
+        Check_Type(opts, T_HASH);
+        dict = rb_hash_aref(opts, CSTR2SYM("dictionary"));
+    }
+
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
     args.s = brotli_deflate_parse_options(
@@ -265,6 +310,16 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     size_t max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
     args.buffer = create_buffer(max_compressed_size);
     args.finished = BROTLI_FALSE;
+
+    /* Set dictionary parameters */
+    if (!NIL_P(dict)) {
+        StringValue(dict);
+        args.dict = (uint8_t*)RSTRING_PTR(dict);
+        args.dict_len = (size_t)RSTRING_LEN(dict);
+    } else {
+        args.dict = NULL;
+        args.dict_len = 0;
+    }
 
 #ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(brotli_deflate_no_gvl, (void *)&args, NULL, NULL);
@@ -373,6 +428,7 @@ static VALUE rb_writer_alloc(VALUE klass) {
 static VALUE rb_writer_initialize(int argc, VALUE* argv, VALUE self) {
     VALUE io = Qnil;
     VALUE opts = Qnil;
+    VALUE dict = Qnil;
     rb_scan_args(argc, argv, "11", &io, &opts);
     if (NIL_P(io)) {
         rb_raise(rb_eArgError, "io should not be nil");
@@ -383,6 +439,28 @@ static VALUE rb_writer_initialize(int argc, VALUE* argv, VALUE self) {
     TypedData_Get_Struct(self, struct brotli, &brotli_data_type, br);
     brotli_deflate_parse_options(br->state, opts);
     br->io = io;
+
+    /* Extract and attach dictionary if provided */
+    if (!NIL_P(opts)) {
+        Check_Type(opts, T_HASH);
+        dict = rb_hash_aref(opts, CSTR2SYM("dictionary"));
+        if (!NIL_P(dict)) {
+            StringValue(dict);
+            BrotliEncoderPreparedDictionary* prepared_dict = BrotliEncoderPrepareDictionary(
+                BROTLI_SHARED_DICTIONARY_RAW,
+                (size_t)RSTRING_LEN(dict),
+                (uint8_t*)RSTRING_PTR(dict),
+                BROTLI_MAX_QUALITY,
+                brotli_alloc,
+                brotli_free,
+                NULL);
+            if (prepared_dict) {
+                BrotliEncoderAttachPreparedDictionary(br->state, prepared_dict);
+                /* Note: dict is owned by encoder after attach, no need to free */
+            }
+        }
+    }
+
     return self;
 }
 
@@ -477,7 +555,7 @@ Init_brotli(void)
     rb_eBrotli = rb_define_class_under(rb_mBrotli, "Error", rb_eStandardError);
     rb_global_variable(&rb_eBrotli);
     rb_define_singleton_method(rb_mBrotli, "deflate", brotli_deflate, -1);
-    rb_define_singleton_method(rb_mBrotli, "inflate", brotli_inflate, 1);
+    rb_define_singleton_method(rb_mBrotli, "inflate", brotli_inflate, -1);
     rb_define_singleton_method(rb_mBrotli, "version", brotli_version, 0);
     id_read = rb_intern("read");
     // Brotli::Writer

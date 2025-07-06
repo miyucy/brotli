@@ -100,6 +100,67 @@ class BrotliTest < Test::Unit::TestCase
     end
   end
 
+  sub_test_case "dictionary support" do
+    def dictionary_data
+      "The quick brown fox jumps over the lazy dog"
+    end
+
+    def repetitive_data
+      dictionary_data * 10
+    end
+
+    test "deflate with dictionary produces smaller output" do
+      compressed_no_dict = Brotli.deflate(repetitive_data)
+      compressed_with_dict = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
+
+      assert compressed_with_dict.bytesize < compressed_no_dict.bytesize
+    end
+
+    test "inflate with matching dictionary works" do
+      compressed = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
+      decompressed = Brotli.inflate(compressed, dictionary: dictionary_data)
+
+      assert_equal repetitive_data, decompressed
+    end
+
+    test "inflate without dictionary fails on dictionary-compressed data" do
+      compressed = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
+
+      assert_raise Brotli::Error do
+        Brotli.inflate(compressed)
+      end
+    end
+
+    test "inflate with wrong dictionary fails" do
+      compressed = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
+      wrong_dict = "A completely different dictionary"
+
+      assert_raise Brotli::Error do
+        Brotli.inflate(compressed, dictionary: wrong_dict)
+      end
+    end
+
+    test "deflate and inflate work with binary dictionary" do
+      binary_dict = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * 10
+      data = "Test data " * 100 + binary_dict
+
+      compressed = Brotli.deflate(data, dictionary: binary_dict)
+      decompressed = Brotli.inflate(compressed, dictionary: binary_dict)
+
+      assert_equal data, decompressed
+    end
+
+    test "deflate with dictionary and other options" do
+      compressed = Brotli.deflate(repetitive_data,
+                                 dictionary: dictionary_data,
+                                 quality: 11,
+                                 mode: :text)
+      decompressed = Brotli.inflate(compressed, dictionary: dictionary_data)
+
+      assert_equal repetitive_data, decompressed
+    end
+  end
+
   sub_test_case "Ractor safe" do
     test "able to invoke non-main ractor" do
       unless defined? ::Ractor
