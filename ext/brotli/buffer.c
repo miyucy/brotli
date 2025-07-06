@@ -1,9 +1,10 @@
 #include "buffer.h"
+#include "ruby/ruby.h"
 #define INITIAL (1024)
 
 buffer_t*
 create_buffer(const size_t initial) {
-    buffer_t *buffer = malloc(sizeof(buffer_t));
+    buffer_t *buffer = ruby_xmalloc(sizeof(buffer_t));
     if (buffer == NULL) {
         return NULL;
     }
@@ -12,7 +13,7 @@ create_buffer(const size_t initial) {
     buffer->expand_count = 0;
     buffer->expand_ratio = 130;
     buffer->size = (size_t) (initial > 0 ? initial : INITIAL);
-    buffer->ptr = malloc(buffer->size);
+    buffer->ptr = ruby_xmalloc(buffer->size);
     if (buffer->ptr == NULL) {
         delete_buffer(buffer);
         return NULL;
@@ -24,17 +25,17 @@ create_buffer(const size_t initial) {
 void
 delete_buffer(buffer_t* buffer) {
     if (buffer->ptr != NULL) {
-        free(buffer->ptr);
+        ruby_xfree(buffer->ptr);
         buffer->ptr = NULL;
     }
-    free(buffer);
+    ruby_xfree(buffer);
 }
 
 static
 buffer_t*
 expand_buffer(buffer_t* const buffer, const size_t need) {
     size_t size = need * buffer->expand_ratio / 100;
-    buffer->ptr = realloc(buffer->ptr, size);
+    buffer->ptr = ruby_xrealloc(buffer->ptr, size);
     buffer->size = size;
     buffer->expand_count += 1;
     return buffer;

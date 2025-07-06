@@ -262,7 +262,8 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     args.s = brotli_deflate_parse_options(
         BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL),
         opts);
-    args.buffer = create_buffer(BUFSIZ);
+    size_t max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
+    args.buffer = create_buffer(max_compressed_size);
     args.finished = BROTLI_FALSE;
 
 #ifdef HAVE_RUBY_THREAD_H
