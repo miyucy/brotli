@@ -35,6 +35,8 @@ class BrotliWriterTest < Test::Unit::TestCase
   end
 
   test "works with dictionary" do
+    omit_if(Brotli.version < "1.1.0", "Dictionary tests are skipped")
+
     dictionary = "The quick brown fox jumps over the lazy dog"
     data = dictionary * 10
 
@@ -49,6 +51,8 @@ class BrotliWriterTest < Test::Unit::TestCase
   end
 
   test "writer with dictionary produces smaller output" do
+    omit_if(Brotli.version < "1.1.0", "Dictionary tests are skipped")
+
     dictionary = "The quick brown fox jumps over the lazy dog"
     data = dictionary * 10
 
@@ -72,6 +76,8 @@ class BrotliWriterTest < Test::Unit::TestCase
   end
 
   test "writer with dictionary and other options" do
+    omit_if(Brotli.version < "1.1.0", "Dictionary tests are skipped")
+
     dictionary = "compression dictionary"
     data = "test data " * 100 + dictionary * 5
 

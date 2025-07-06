@@ -21,9 +21,10 @@ class BrotliTest < Test::Unit::TestCase
     end
   end
 
-  sub_test_case ".version" do
-    test "returns string" do
-      assert_equal "1.1.0", Brotli.version
+  test ".version" do
+    assert do
+      puts "Brotli version: #{Brotli.version}"
+      ["1.1.0", "1.0.9"].include? Brotli.version
     end
   end
 
@@ -101,6 +102,10 @@ class BrotliTest < Test::Unit::TestCase
   end
 
   sub_test_case "dictionary support" do
+    def setup
+      omit "Dictionary tests are skipped" if Brotli.version < "1.1.0"
+    end
+
     def dictionary_data
       "The quick brown fox jumps over the lazy dog"
     end

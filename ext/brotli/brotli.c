@@ -115,7 +115,7 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
         args.dict = (uint8_t*)RSTRING_PTR(dict);
         args.dict_len = (size_t)RSTRING_LEN(dict);
 #else
-        rb_raise(rb_eBrotli, "Dictionary support not available in this build")
+        rb_raise(rb_eBrotli, "Dictionary support not available in this build");
 #endif
     } else {
         args.dict = NULL;

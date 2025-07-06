@@ -13,6 +13,7 @@ have_dev_pkg = [
   pkg_config("libbrotlienc")
 ].all? { |e| e }
 
+have_header("brotli/shared_dictionary.h")
 have_func("BrotliEncoderPrepareDictionary", "brotli/encode.h")
 have_func("BrotliEncoderAttachPreparedDictionary", "brotli/encode.h")
 have_func("BrotliDecoderAttachDictionary", "brotli/decode.h")
@@ -20,6 +21,10 @@ have_func("BrotliDecoderAttachDictionary", "brotli/decode.h")
 if enable_config("vendor")
   have_dev_pkg = false
   Logging::message "Use vendor brotli\n"
+  $defs << "-DHAVE_BROTLI_SHARED_DICTIONARY_H"
+  $defs << "-DHAVE_BROTLIENCODERPREPAREDICTIONARY"
+  $defs << "-DHAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY"
+  $defs << "-DHAVE_BROTLIDECODERATTACHDICTIONARY"
 end
 
 $CPPFLAGS << " -DOS_MACOSX" if RbConfig::CONFIG["host_os"] =~ /darwin|mac os/

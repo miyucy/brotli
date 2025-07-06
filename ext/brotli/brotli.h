@@ -10,7 +10,9 @@
 
 #include "brotli/encode.h"
 #include "brotli/decode.h"
+#ifdef HAVE_BROTLI_SHARED_DICTIONARY_H
 #include "brotli/shared_dictionary.h"
+#endif
 #include "buffer.h"
 
 #endif /* BROTLI_H */
