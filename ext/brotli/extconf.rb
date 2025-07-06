@@ -13,6 +13,10 @@ have_dev_pkg = [
   pkg_config("libbrotlienc")
 ].all? { |e| e }
 
+have_func("BrotliEncoderPrepareDictionary", "brotli/encode.h")
+have_func("BrotliEncoderAttachPreparedDictionary", "brotli/encode.h")
+have_func("BrotliDecoderAttachDictionary", "brotli/decode.h")
+
 if enable_config("vendor")
   have_dev_pkg = false
   Logging::message "Use vendor brotli\n"

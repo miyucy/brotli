@@ -46,11 +46,13 @@ brotli_inflate_no_gvl(void *arg)
     buffer_t*       buffer = args->buffer;
     BrotliDecoderState*  s = args->s;
 
+#ifdef HAVE_BROTLIDECODERATTACHDICTIONARY
     /* Attach dictionary if provided */
     if (args->dict && args->dict_len > 0) {
         BrotliDecoderAttachDictionary(s, BROTLI_SHARED_DICTIONARY_RAW,
                                       args->dict_len, args->dict);
     }
+#endif
 
     for (;;) {
         r = BrotliDecoderDecompressStream(s,
@@ -108,9 +110,13 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
 
     /* Set dictionary parameters */
     if (!NIL_P(dict)) {
+#ifdef HAVE_BROTLIDECODERATTACHDICTIONARY
         StringValue(dict);
         args.dict = (uint8_t*)RSTRING_PTR(dict);
         args.dict_len = (size_t)RSTRING_LEN(dict);
+#else
+        rb_raise(rb_eBrotli, "Dictionary support not available in this build")
+#endif
     } else {
         args.dict = NULL;
         args.dict_len = 0;
@@ -249,6 +255,7 @@ brotli_deflate_no_gvl(void *arg)
     buffer_t*       buffer = args->buffer;
     BrotliEncoderState*  s = args->s;
 
+#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     /* Attach dictionary if provided */
     if (args->dict && args->dict_len > 0) {
         BrotliEncoderPreparedDictionary* dict = BrotliEncoderPrepareDictionary(
@@ -259,6 +266,7 @@ brotli_deflate_no_gvl(void *arg)
             /* Note: dict is owned by encoder after attach, no need to free */
         }
     }
+#endif
 
     for (;;) {
         r = BrotliEncoderCompressStream(s,
@@ -313,9 +321,13 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
 
     /* Set dictionary parameters */
     if (!NIL_P(dict)) {
+#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
         StringValue(dict);
         args.dict = (uint8_t*)RSTRING_PTR(dict);
         args.dict_len = (size_t)RSTRING_LEN(dict);
+#else
+        rb_raise(rb_eBrotli, "Dictionary support not available in this build");
+#endif
     } else {
         args.dict = NULL;
         args.dict_len = 0;
@@ -440,6 +452,7 @@ static VALUE rb_writer_initialize(int argc, VALUE* argv, VALUE self) {
     brotli_deflate_parse_options(br->state, opts);
     br->io = io;
 
+#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     /* Extract and attach dictionary if provided */
     if (!NIL_P(opts)) {
         Check_Type(opts, T_HASH);
@@ -457,9 +470,21 @@ static VALUE rb_writer_initialize(int argc, VALUE* argv, VALUE self) {
             if (prepared_dict) {
                 BrotliEncoderAttachPreparedDictionary(br->state, prepared_dict);
                 /* Note: dict is owned by encoder after attach, no need to free */
+            } else {
+                rb_raise(rb_eBrotli, "Failed to prepare dictionary for compression");
             }
         }
     }
+#else
+    /* Check if dictionary is requested but not supported */
+    if (!NIL_P(opts)) {
+        Check_Type(opts, T_HASH);
+        dict = rb_hash_aref(opts, CSTR2SYM("dictionary"));
+        if (!NIL_P(dict)) {
+            rb_raise(rb_eBrotli, "Dictionary support not available in this build");
+        }
+    }
+#endif
 
     return self;
 }
