@@ -80,6 +80,24 @@ File.open('output.br', 'wb') do |file|
 end
 ```
 
+### Streaming Decompression with Reader
+
+```ruby
+# Basic usage
+File.open('output.br', 'rb') do |file|
+  reader = Brotli::Reader.new(file)
+  data = reader.read
+  reader.close
+end
+
+# With dictionary
+File.open('output.br', 'rb') do |file|
+  reader = Brotli::Reader.new(file, dictionary: dictionary)
+  data = reader.read
+  reader.close
+end
+```
+
 See test/brotli_test.rb for more examples.
 
 ## Development
