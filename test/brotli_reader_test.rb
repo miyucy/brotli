@@ -177,6 +177,14 @@ class BrotliReaderTest < Test::Unit::TestCase
     end
   end
 
+  test "reader ignores trailing bytes in the same compressed chunk" do
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate("abc") + "trailer"))
+
+    assert_equal "abc", reader.read
+    assert_equal "", reader.read
+    assert_equal true, reader.eof?
+  end
+
   sub_test_case "dictionary support" do
     def setup
       omit "Dictionary tests are skipped" if Brotli.version < "1.1.0"

@@ -1459,6 +1459,9 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         limit_value = rb_hash_aref(opts, CSTR2SYM("output_buffer_limit"));
         if (!NIL_P(limit_value)) {
             output_buffer_limit = NUM2SIZET(limit_value);
+            if (output_buffer_limit == 0) {
+                rb_raise(rb_eArgError, "output_buffer_limit must be positive");
+            }
             limit_output = BROTLI_TRUE;
         }
     }
@@ -1539,11 +1542,8 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         }
         if (result == BROTLI_DECODER_RESULT_SUCCESS) {
             br->finished = BROTLI_TRUE;
-            br->pending_input = Qnil;
+            brotli_decompressor_store_pending_input(br, next_in, available_in);
             br->needs_more_output = BROTLI_FALSE;
-            if (available_in > 0) {
-                rb_raise(rb_eBrotli, "Excessive input");
-            }
             break;
         }
 

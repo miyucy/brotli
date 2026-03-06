@@ -65,12 +65,12 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal testdata, decompressed
   end
 
-  test "decompressor detects excessive input" do
+  test "decompressor accepts trailing bytes in the same input chunk" do
     decompressor = Brotli::Decompressor.new
 
-    assert_raise Brotli::Error do
-      decompressor.process(Brotli.deflate("abc") + "x")
-    end
+    assert_equal "abc", decompressor.process(Brotli.deflate("abc") + "x")
+    assert_equal true, decompressor.finished?
+    assert_equal false, decompressor.can_accept_more_data
   end
 
   test "decompressor accepts empty input after finish and rejects non-empty" do
@@ -108,6 +108,20 @@ class BrotliStreamTest < Test::Unit::TestCase
 
     assert_equal compressed.bytesize, offset
     assert_equal expected, decompressed
+  end
+
+  test "decompressor rejects zero output_buffer_limit without wedging the stream" do
+    compressed = Brotli.deflate("hello world")
+    decompressor = Brotli::Decompressor.new
+
+    error = assert_raise ArgumentError do
+      decompressor.process(compressed, output_buffer_limit: 0)
+    end
+
+    assert_equal "output_buffer_limit must be positive", error.message
+    assert_equal true, decompressor.can_accept_more_data
+    assert_equal "hello world", decompressor.process(compressed)
+    assert_equal true, decompressor.finished?
   end
 
   test "decompressor requires draining when one input chunk exceeds output_buffer_limit" do
