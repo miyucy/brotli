@@ -373,7 +373,7 @@ static VALUE brotli_version(VALUE klass) {
  * Streaming APIs
  ******************************************************************************/
 
-static ID id_write, id_flush, id_close, id_process, id_finish, id_is_finished;
+static ID id_write, id_flush, id_close, id_process, id_finish, id_is_finished, id_can_accept_more_data;
 static VALUE rb_cBrotliCompressor;
 static VALUE rb_cBrotliDecompressor;
 
@@ -811,12 +811,19 @@ brotli_reader_update_finished(brotli_reader_t* br)
 }
 
 static void
-brotli_reader_feed_chunk(brotli_reader_t* br, VALUE chunk)
+brotli_reader_feed_chunk(brotli_reader_t* br, VALUE chunk, size_t output_limit)
 {
     VALUE output;
+    VALUE opts = Qnil;
 
     StringValue(chunk);
-    output = rb_funcall(br->decompressor, id_process, 1, chunk);
+    if (output_limit > 0) {
+        opts = rb_hash_new();
+        rb_hash_aset(opts, CSTR2SYM("output_buffer_limit"), SIZET2NUM(output_limit));
+        output = rb_funcall(br->decompressor, id_process, 2, chunk, opts);
+    } else {
+        output = rb_funcall(br->decompressor, id_process, 1, chunk);
+    }
     if (RSTRING_LEN(output) > 0) {
         rb_str_cat(br->output_buffer, RSTRING_PTR(output), RSTRING_LEN(output));
     }
@@ -824,28 +831,63 @@ brotli_reader_feed_chunk(brotli_reader_t* br, VALUE chunk)
 }
 
 static void
-brotli_reader_fill_buffer(brotli_reader_t* br, size_t wanted, BROTLI_BOOL stop_after_output)
+brotli_reader_fill_buffer(brotli_reader_t* br,
+                          size_t wanted,
+                          size_t output_limit,
+                          BROTLI_BOOL stop_after_output)
 {
     while ((size_t)RSTRING_LEN(br->output_buffer) < wanted && !br->finished) {
-        VALUE chunk = rb_funcall(br->io, id_read, 1, SIZET2NUM(BUFSIZ));
-        if (NIL_P(chunk)) {
-            brotli_reader_update_finished(br);
-            if (br->finished) {
-                break;
+        VALUE chunk;
+        size_t remaining_limit = 0;
+
+        if (RTEST(rb_funcall(br->decompressor, id_can_accept_more_data, 0))) {
+            chunk = rb_funcall(br->io, id_read, 1, SIZET2NUM(BUFSIZ));
+            if (NIL_P(chunk)) {
+                size_t buffered = (size_t)RSTRING_LEN(br->output_buffer);
+
+                brotli_reader_feed_chunk(br, rb_str_new("", 0), remaining_limit);
+                if (br->finished) {
+                    break;
+                }
+                if ((size_t)RSTRING_LEN(br->output_buffer) > buffered ||
+                    !RTEST(rb_funcall(br->decompressor, id_can_accept_more_data, 0))) {
+                    if (stop_after_output && RSTRING_LEN(br->output_buffer) > 0) {
+                        break;
+                    }
+                    continue;
+                }
+                rb_raise(rb_eBrotli, "Unexpected end of compressed stream");
             }
-            rb_raise(rb_eBrotli, "Unexpected end of compressed stream");
+
+            StringValue(chunk);
+            if (RSTRING_LEN(chunk) == 0) {
+                size_t buffered = (size_t)RSTRING_LEN(br->output_buffer);
+
+                brotli_reader_feed_chunk(br, rb_str_new("", 0), remaining_limit);
+                if (br->finished) {
+                    break;
+                }
+                if ((size_t)RSTRING_LEN(br->output_buffer) > buffered ||
+                    !RTEST(rb_funcall(br->decompressor, id_can_accept_more_data, 0))) {
+                    if (stop_after_output && RSTRING_LEN(br->output_buffer) > 0) {
+                        break;
+                    }
+                    continue;
+                }
+                rb_raise(rb_eBrotli, "Unexpected end of compressed stream");
+            }
+        } else {
+            chunk = rb_str_new("", 0);
         }
 
-        StringValue(chunk);
-        if (RSTRING_LEN(chunk) == 0) {
-            brotli_reader_update_finished(br);
-            if (br->finished) {
-                break;
+        if (output_limit > 0) {
+            size_t buffered = (size_t)RSTRING_LEN(br->output_buffer);
+            if (output_limit > buffered) {
+                remaining_limit = output_limit - buffered;
             }
-            rb_raise(rb_eBrotli, "Unexpected end of compressed stream");
         }
 
-        brotli_reader_feed_chunk(br, chunk);
+        brotli_reader_feed_chunk(br, chunk, remaining_limit);
         if (stop_after_output && RSTRING_LEN(br->output_buffer) > 0) {
             break;
         }
@@ -898,7 +940,7 @@ rb_reader_read(int argc, VALUE* argv, VALUE self)
     if (NIL_P(length)) {
         while (!br->finished) {
             size_t wanted = (size_t)RSTRING_LEN(br->output_buffer) + 1;
-            brotli_reader_fill_buffer(br, wanted, BROTLI_FALSE);
+            brotli_reader_fill_buffer(br, wanted, 0, BROTLI_FALSE);
         }
         output = brotli_reader_take_output(br, (size_t)RSTRING_LEN(br->output_buffer));
         return brotli_reader_with_outbuf(outbuf, output);
@@ -912,7 +954,7 @@ rb_reader_read(int argc, VALUE* argv, VALUE self)
         return brotli_reader_with_outbuf(outbuf, rb_str_new("", 0));
     }
 
-    brotli_reader_fill_buffer(br, (size_t)len, BROTLI_FALSE);
+    brotli_reader_fill_buffer(br, (size_t)len, (size_t)len, BROTLI_FALSE);
     if (RSTRING_LEN(br->output_buffer) == 0 && br->finished) {
         return Qnil;
     }
@@ -943,7 +985,7 @@ rb_reader_readpartial(int argc, VALUE* argv, VALUE self)
         if (br->finished) {
             rb_raise(rb_eEOFError, "end of file reached");
         }
-        brotli_reader_fill_buffer(br, 1, BROTLI_TRUE);
+        brotli_reader_fill_buffer(br, 1, (size_t)len, BROTLI_TRUE);
         if (RSTRING_LEN(br->output_buffer) == 0 && br->finished) {
             rb_raise(rb_eEOFError, "end of file reached");
         }
@@ -987,7 +1029,7 @@ rb_reader_gets(int argc, VALUE* argv, VALUE self)
 
         {
             size_t wanted = (size_t)RSTRING_LEN(br->output_buffer) + 1;
-            brotli_reader_fill_buffer(br, wanted, BROTLI_FALSE);
+            brotli_reader_fill_buffer(br, wanted, 0, BROTLI_FALSE);
         }
     }
 
@@ -1036,7 +1078,7 @@ rb_reader_eof_p(VALUE self)
         return Qtrue;
     }
 
-    brotli_reader_fill_buffer(br, 1, BROTLI_TRUE);
+    brotli_reader_fill_buffer(br, 1, 1, BROTLI_TRUE);
     if (RSTRING_LEN(br->output_buffer) > 0) {
         return Qfalse;
     }
@@ -1474,6 +1516,7 @@ Init_brotli(void)
     id_process = rb_intern("process");
     id_finish = rb_intern("finish");
     id_is_finished = rb_intern("is_finished");
+    id_can_accept_more_data = rb_intern("can_accept_more_data");
 
     rb_cBrotliCompressor = rb_define_class_under(rb_mBrotli, "Compressor", rb_cObject);
     rb_define_alloc_func(rb_cBrotliCompressor, rb_compressor_alloc);

@@ -45,6 +45,32 @@ class BrotliReaderTest < Test::Unit::TestCase
     end
   end
 
+  test "repeated small reads drain decompressor output before reading more input" do
+    data = ("hello world\n" * 2_000)
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(data)))
+    output = +""
+
+    while (chunk = reader.read(1))
+      output << chunk
+    end
+
+    assert_equal data, output
+  end
+
+  test "repeated readpartial calls work with buffered decompressor output" do
+    data = ("hello world\n" * 2_000)
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(data)))
+    output = +""
+
+    loop do
+      output << reader.readpartial(7)
+    rescue EOFError
+      break
+    end
+
+    assert_equal data, output
+  end
+
   test "gets and each_line" do
     text = "alpha\nbeta\ngamma\n"
     io = StringIO.new(Brotli.deflate(text))
