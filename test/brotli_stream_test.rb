@@ -9,6 +9,10 @@ class BrotliStreamTest < Test::Unit::TestCase
     )
   end
 
+  def fixture(name)
+    File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata", name), __dir__)
+  end
+
   test "compressor process and finish" do
     compressor = Brotli::Compressor.new
     compressed = compressor.process(testdata)
@@ -80,6 +84,65 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_raise Brotli::Error do
       decompressor.process("x")
     end
+  end
+
+  test "decompressor output_buffer_limit can bound streaming output" do
+    compressed = File.binread(fixture("zerosukkanooa.compressed"))
+    expected = File.binread(fixture("zerosukkanooa"))
+    decompressor = Brotli::Decompressor.new
+    decompressed = +""
+    chunk_size = 10 * 1024
+    offset = 0
+
+    until decompressor.finished?
+      input = +""
+      if decompressor.can_accept_more_data
+        input = compressed.byteslice(offset, chunk_size) || +""
+        offset += input.bytesize
+      end
+
+      output = decompressor.process(input, output_buffer_limit: 10_240)
+      assert_operator output.bytesize, :<=, 10_240
+      decompressed << output
+    end
+
+    assert_equal compressed.bytesize, offset
+    assert_equal expected, decompressed
+  end
+
+  test "decompressor rejects new input while output is still pending" do
+    compressed = File.binread(fixture("zerosukkanooa.compressed"))
+    decompressor = Brotli::Decompressor.new
+
+    output = decompressor.process(compressed.byteslice(0, compressed.bytesize - 1), output_buffer_limit: 10_240)
+
+    assert_operator output.bytesize, :<=, 10_240
+    assert_equal false, decompressor.can_accept_more_data
+
+    assert_raise Brotli::Error do
+      decompressor.process(compressed.byteslice(-1, 1))
+    end
+  end
+
+  test "decompressor can resume with a different output_buffer_limit" do
+    compressed = File.binread(fixture("zerosukkanooa.compressed"))
+    expected = File.binread(fixture("zerosukkanooa"))
+    decompressor = Brotli::Decompressor.new
+    decompressed = +""
+
+    output = decompressor.process(compressed.byteslice(0, compressed.bytesize - 1), output_buffer_limit: 10_240)
+    assert_operator output.bytesize, :<=, 10_240
+    decompressed << output
+
+    until decompressor.can_accept_more_data
+      output = decompressor.process("", output_buffer_limit: 2_048)
+      assert_operator output.bytesize, :<=, 2_048
+      decompressed << output
+    end
+
+    decompressed << decompressor.process(compressed.byteslice(-1, 1))
+
+    assert_equal expected, decompressed
   end
 
   sub_test_case "dictionary support" do

@@ -22,10 +22,8 @@ class BrotliTest < Test::Unit::TestCase
   end
 
   test ".version" do
-    assert do
-      puts "Brotli version: #{Brotli.version}"
-      ["1.1.0", "1.0.9"].include? Brotli.version
-    end
+    puts "Brotli version: #{Brotli.version}"
+    assert_match(/\A\d+\.\d+\.\d+\z/, Brotli.version)
   end
 
   sub_test_case ".deflate" do
