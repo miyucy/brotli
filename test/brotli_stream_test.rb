@@ -316,6 +316,31 @@ class BrotliStreamTest < Test::Unit::TestCase
       end
     end
 
+    test "stream compressor snapshots dictionary bytes at initialization" do
+      original_dictionary = "The quick brown fox jumps over the lazy dog"
+      dictionary = original_dictionary.dup
+      data = original_dictionary * 12
+      compressor = Brotli::Compressor.new(dictionary: dictionary)
+
+      dictionary.replace("x" * dictionary.bytesize)
+      compressed = compressor.process(data) + compressor.finish
+
+      assert_equal data, Brotli.inflate(compressed, dictionary: original_dictionary)
+    end
+
+    test "stream decompressor snapshots dictionary bytes at initialization" do
+      original_dictionary = "The quick brown fox jumps over the lazy dog"
+      dictionary = original_dictionary.dup
+      data = original_dictionary * 12
+      compressed = Brotli.deflate(data, dictionary: original_dictionary)
+      decompressor = Brotli::Decompressor.new(dictionary: dictionary)
+
+      dictionary.replace("x" * dictionary.bytesize)
+
+      assert_equal data, decompressor.process(compressed)
+      assert_equal true, decompressor.finished?
+    end
+
     test "decompressor without dictionary fails for dictionary stream" do
       dictionary = "The quick brown fox jumps over the lazy dog"
       data = dictionary * 12

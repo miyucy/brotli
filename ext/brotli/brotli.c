@@ -387,12 +387,31 @@ static ID id_write, id_flush, id_close, id_process, id_finish, id_is_finished, i
 static VALUE rb_cBrotliCompressor;
 static VALUE rb_cBrotliDecompressor;
 
+static uint8_t*
+brotli_copy_string_data(VALUE string, size_t* len)
+{
+    size_t copy_len;
+    size_t alloc_len;
+    uint8_t* copy;
+
+    StringValue(string);
+    copy_len = (size_t)RSTRING_LEN(string);
+    alloc_len = copy_len > 0 ? copy_len : 1;
+    copy = brotli_alloc(NULL, alloc_len);
+    if (copy_len > 0) {
+        memcpy(copy, RSTRING_PTR(string), copy_len);
+    }
+    *len = copy_len;
+    return copy;
+}
+
 typedef struct {
     BrotliEncoderState* state;
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     BrotliEncoderPreparedDictionary* prepared_dict;
 #endif
-    VALUE dict;
+    uint8_t* dict_data;
+    size_t dict_len;
     BROTLI_BOOL finished;
 } brotli_encoder_t;
 
@@ -416,7 +435,8 @@ typedef struct {
 
 typedef struct {
     BrotliDecoderState* state;
-    VALUE dict;
+    uint8_t* dict_data;
+    size_t dict_len;
     VALUE pending_input;
     BROTLI_BOOL needs_more_output;
     BROTLI_BOOL finished;
@@ -493,7 +513,9 @@ brotli_encoder_destroy(brotli_encoder_t* encoder)
         encoder->prepared_dict = NULL;
     }
 #endif
-    encoder->dict = Qnil;
+    brotli_free(NULL, encoder->dict_data);
+    encoder->dict_data = NULL;
+    encoder->dict_len = 0;
     encoder->finished = BROTLI_FALSE;
 }
 
@@ -525,27 +547,31 @@ brotli_encoder_attach_dictionary(brotli_encoder_t* encoder, VALUE opts)
     }
 
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
-    StringValue(dict);
+    encoder->dict_data = brotli_copy_string_data(dict, &encoder->dict_len);
     encoder->prepared_dict = BrotliEncoderPrepareDictionary(
         BROTLI_SHARED_DICTIONARY_RAW,
-        (size_t)RSTRING_LEN(dict),
-        (const uint8_t*)RSTRING_PTR(dict),
+        encoder->dict_len,
+        encoder->dict_data,
         BROTLI_MAX_QUALITY,
         brotli_alloc,
         brotli_free,
         NULL);
 
     if (!encoder->prepared_dict) {
+        brotli_free(NULL, encoder->dict_data);
+        encoder->dict_data = NULL;
+        encoder->dict_len = 0;
         rb_raise(rb_eBrotli, "Failed to prepare dictionary for compression");
     }
 
     if (!BrotliEncoderAttachPreparedDictionary(encoder->state, encoder->prepared_dict)) {
         BrotliEncoderDestroyPreparedDictionary(encoder->prepared_dict);
         encoder->prepared_dict = NULL;
+        brotli_free(NULL, encoder->dict_data);
+        encoder->dict_data = NULL;
+        encoder->dict_len = 0;
         rb_raise(rb_eBrotli, "Failed to attach dictionary for compression");
     }
-
-    encoder->dict = dict;
 #else
     rb_raise(rb_eBrotli, "Dictionary support not available in this build");
 #endif
@@ -1251,8 +1277,7 @@ rb_reader_closed_p(VALUE self)
 static void
 brotli_compressor_mark(void *p)
 {
-    brotli_compressor_t *br = p;
-    rb_gc_mark(br->encoder.dict);
+    (void)p;
 }
 
 static void
@@ -1284,7 +1309,8 @@ rb_compressor_alloc(VALUE klass)
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     br->encoder.prepared_dict = NULL;
 #endif
-    br->encoder.dict = Qnil;
+    br->encoder.dict_data = NULL;
+    br->encoder.dict_len = 0;
     br->encoder.finished = BROTLI_FALSE;
     if (!br->encoder.state) {
         rb_raise(rb_eNoMemError, "BrotliEncoderCreateInstance failed");
@@ -1375,7 +1401,6 @@ static void
 brotli_decompressor_mark(void *p)
 {
     brotli_decompressor_t *br = p;
-    rb_gc_mark(br->dict);
     rb_gc_mark(br->pending_input);
 }
 
@@ -1387,7 +1412,9 @@ brotli_decompressor_free(void *p)
         BrotliDecoderDestroyInstance(br->state);
         br->state = NULL;
     }
-    br->dict = Qnil;
+    brotli_free(NULL, br->dict_data);
+    br->dict_data = NULL;
+    br->dict_len = 0;
     br->pending_input = Qnil;
     br->needs_more_output = BROTLI_FALSE;
     br->finished = BROTLI_FALSE;
@@ -1412,7 +1439,8 @@ rb_decompressor_alloc(VALUE klass)
     brotli_decompressor_t *br;
     VALUE obj = TypedData_Make_Struct(klass, brotli_decompressor_t, &brotli_decompressor_data_type, br);
     br->state = BrotliDecoderCreateInstance(brotli_alloc, brotli_free, NULL);
-    br->dict = Qnil;
+    br->dict_data = NULL;
+    br->dict_len = 0;
     br->pending_input = Qnil;
     br->needs_more_output = BROTLI_FALSE;
     br->finished = BROTLI_FALSE;
@@ -1439,14 +1467,16 @@ brotli_decompressor_attach_dictionary(brotli_decompressor_t* br, VALUE opts)
     }
 
 #ifdef HAVE_BROTLIDECODERATTACHDICTIONARY
-    StringValue(dict);
+    br->dict_data = brotli_copy_string_data(dict, &br->dict_len);
     if (!BrotliDecoderAttachDictionary(br->state,
                                        BROTLI_SHARED_DICTIONARY_RAW,
-                                       (size_t)RSTRING_LEN(dict),
-                                       (const uint8_t*)RSTRING_PTR(dict))) {
+                                       br->dict_len,
+                                       br->dict_data)) {
+        brotli_free(NULL, br->dict_data);
+        br->dict_data = NULL;
+        br->dict_len = 0;
         rb_raise(rb_eBrotli, "Failed to attach dictionary for decompression");
     }
-    br->dict = dict;
 #else
     rb_raise(rb_eBrotli, "Dictionary support not available in this build");
 #endif
