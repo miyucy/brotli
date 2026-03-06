@@ -34,6 +34,18 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal testdata, Brotli.inflate(compressed)
   end
 
+  test "compressor flush emits a fully decodable prefix" do
+    data = ("hello world\n" * 5_000).b
+    compressor = Brotli::Compressor.new
+    compressed = compressor.process(data)
+    compressed << compressor.flush
+
+    decompressor = Brotli::Decompressor.new
+    assert_equal data, decompressor.process(compressed)
+    assert_equal false, decompressor.finished?
+    assert_equal true, decompressor.can_accept_more_data
+  end
+
   test "compressor rejects process and flush after finish" do
     compressor = Brotli::Compressor.new
     compressor.process("abc")
@@ -166,6 +178,31 @@ class BrotliStreamTest < Test::Unit::TestCase
 
     assert_equal data, decompressed
     assert_equal tail, decompressor.unused_data
+  end
+
+  test "decompressor process releases the gvl" do
+    data = ("hello world\n" * 100_000).b
+    compressed = Brotli.deflate(data)
+    counter = 0
+    stop = false
+    ready = Queue.new
+
+    worker = Thread.new do
+      ready << true
+      until stop
+        counter += 1
+        Thread.pass
+      end
+    end
+
+    ready.pop
+    counter = 0
+    output = Brotli::Decompressor.new.process(compressed)
+    stop = true
+    worker.join
+
+    assert_equal data.bytesize, output.bytesize
+    assert_operator counter, :>, 100
   end
 
   test "decompressor rejects new input while output is still pending" do

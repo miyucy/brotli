@@ -429,12 +429,32 @@ typedef struct {
     BROTLI_BOOL ok;
 } brotli_encoder_args_t;
 
+typedef struct {
+    BrotliDecoderState* state;
+    size_t available_in;
+    const uint8_t* next_in;
+    size_t available_out;
+    uint8_t* next_out;
+    BrotliDecoderResult result;
+} brotli_decoder_args_t;
+
 static void* compress_no_gvl(void *ptr) {
     brotli_encoder_args_t *args = ptr;
     size_t zero = 0;
     args->ok = BrotliEncoderCompressStream(args->state, args->op,
                                            &args->available_in, &args->next_in,
                                            &zero, NULL, NULL);
+    return NULL;
+}
+
+static void* decompress_no_gvl(void *ptr) {
+    brotli_decoder_args_t *args = ptr;
+    args->result = BrotliDecoderDecompressStream(args->state,
+                                                 &args->available_in,
+                                                 &args->next_in,
+                                                 &args->available_out,
+                                                 &args->next_out,
+                                                 NULL);
     return NULL;
 }
 
@@ -445,6 +465,16 @@ brotli_encoder_step(brotli_encoder_args_t *args)
     rb_thread_call_without_gvl(compress_no_gvl, (void*)args, NULL, NULL);
 #else
     compress_no_gvl((void*)args);
+#endif
+}
+
+static void
+brotli_decompressor_step(brotli_decoder_args_t *args)
+{
+#ifdef HAVE_RUBY_THREAD_H
+    rb_thread_call_without_gvl(decompress_no_gvl, (void*)args, NULL, NULL);
+#else
+    decompress_no_gvl((void*)args);
 #endif
 }
 
@@ -540,27 +570,25 @@ brotli_encoder_stream_to_string(brotli_encoder_t* encoder,
     }
 
     for (;;) {
+        long output_len_before;
+        size_t produced;
+
         brotli_encoder_step(&args);
         if (args.ok == BROTLI_FALSE) {
             rb_raise(rb_eBrotli, "BrotliEncoderCompressStream failed");
         }
 
+        output_len_before = RSTRING_LEN(output);
         brotli_encoder_take_output_to_string(encoder->state, output);
+        produced = (size_t)(RSTRING_LEN(output) - output_len_before);
 
-        if (op == BROTLI_OPERATION_PROCESS) {
-            if (args.available_in == 0) {
-                break;
-            }
-        } else if (op == BROTLI_OPERATION_FLUSH) {
-            if (args.available_in == 0 && !BrotliEncoderHasMoreOutput(encoder->state)) {
-                break;
-            }
-        } else {
-            if (BrotliEncoderIsFinished(encoder->state) &&
-                !BrotliEncoderHasMoreOutput(encoder->state)) {
-                break;
-            }
+        if (args.available_in > 0 || BrotliEncoderHasMoreOutput(encoder->state)) {
+            continue;
         }
+        if (op != BROTLI_OPERATION_PROCESS && produced > 0) {
+            continue;
+        }
+        break;
     }
 
     return output;
@@ -1502,8 +1530,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
 
     for (;;) {
         size_t chunk_size = BUFSIZ;
-        size_t available_out;
-        uint8_t* next_out = outbuf;
+        brotli_decoder_args_t args;
         size_t produced;
 
         if (limit_output) {
@@ -1518,15 +1545,18 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
             }
         }
 
-        available_out = chunk_size;
-        result = BrotliDecoderDecompressStream(br->state,
-                                               &available_in,
-                                               &next_in,
-                                               &available_out,
-                                               &next_out,
-                                               NULL);
+        args.state = br->state;
+        args.available_in = available_in;
+        args.next_in = next_in;
+        args.available_out = chunk_size;
+        args.next_out = outbuf;
+        args.result = BROTLI_DECODER_RESULT_ERROR;
+        brotli_decompressor_step(&args);
+        available_in = args.available_in;
+        next_in = args.next_in;
+        result = args.result;
 
-        produced = chunk_size - available_out;
+        produced = chunk_size - args.available_out;
         if (produced > 0) {
             rb_str_cat(output, (const char*)outbuf, produced);
         }
@@ -1540,6 +1570,9 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
             continue;
         }
         if (result == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT) {
+            if (BrotliDecoderHasMoreOutput(br->state)) {
+                continue;
+            }
             br->pending_input = Qnil;
             br->needs_more_output = BROTLI_FALSE;
             break;

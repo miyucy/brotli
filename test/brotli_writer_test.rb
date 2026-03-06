@@ -28,6 +28,21 @@ class BrotliWriterTest < Test::Unit::TestCase
     assert_equal testdata, Brotli.inflate(@tempfile.read)
   end
 
+  test "flush writes a fully decodable prefix" do
+    data = ("hello world\n" * 5_000).b
+    writer = Brotli::Writer.new(@tempfile)
+
+    assert_equal data.bytesize, writer.write(data)
+    assert_equal writer, writer.flush
+
+    @tempfile.rewind
+    decompressor = Brotli::Decompressor.new
+    assert_equal data, decompressor.process(@tempfile.read)
+    assert_equal false, decompressor.finished?
+
+    writer.close
+  end
+
   test "close still closes io when finish raises" do
     original_finish = Brotli::Compressor.instance_method(:finish)
     Brotli::Compressor.class_eval do
