@@ -23,7 +23,7 @@ class BrotliTest < Test::Unit::TestCase
 
   test ".version" do
     puts "Brotli version: #{Brotli.version}"
-    assert_match(/\A\d+\.\d+\.\d+\z/, Brotli.version)
+    assert_equal "1.2.0", Brotli.version
   end
 
   sub_test_case ".deflate" do
