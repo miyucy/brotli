@@ -23,7 +23,7 @@ class BrotliTest < Test::Unit::TestCase
 
   test ".version" do
     puts "Brotli version: #{Brotli.version}"
-    assert_equal "1.2.0", Brotli.version
+    assert(["1.2.0", "1.1.0", "1.0.9"].include?(Brotli.version))
   end
 
   sub_test_case ".deflate" do

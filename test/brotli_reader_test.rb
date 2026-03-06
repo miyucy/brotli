@@ -28,7 +28,8 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_same out, reader.read(4, out)
     assert_equal "defg", out
     assert_equal "hij", reader.read
-    assert_nil reader.read(1)
+    assert_nil reader.read(1, out)
+    assert_equal "", out
   end
 
   test "readpartial" do
@@ -41,8 +42,9 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_equal " worl", reader.readpartial(5)
     assert_equal "d", reader.readpartial(5)
     assert_raise EOFError do
-      reader.readpartial(1)
+      reader.readpartial(1, out)
     end
+    assert_equal "", out
   end
 
   test "repeated small reads drain decompressor output before reading more input" do

@@ -334,6 +334,7 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
             BrotliEncoderDestroyInstance(args.s);
             rb_raise(rb_eBrotli, "Failed to attach dictionary for compression");
         }
+        args.prepared_dict = NULL;
 #else
         delete_buffer(args.buffer);
         BrotliEncoderDestroyInstance(args.s);
@@ -352,12 +353,6 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
 
     delete_buffer(args.buffer);
     BrotliEncoderDestroyInstance(args.s);
-#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
-    if (args.prepared_dict) {
-        BrotliEncoderDestroyPreparedDictionary(args.prepared_dict);
-        args.prepared_dict = NULL;
-    }
-#endif
 
     if (args.finished != BROTLI_TRUE) {
         rb_raise(rb_eBrotli, "Failed to compress");
@@ -416,6 +411,7 @@ typedef struct {
     BrotliDecoderState* state;
     VALUE dict;
     VALUE pending_input;
+    BROTLI_BOOL needs_more_output;
     BROTLI_BOOL finished;
 } brotli_decompressor_t;
 
@@ -453,12 +449,6 @@ brotli_encoder_destroy(brotli_encoder_t* encoder)
         BrotliEncoderDestroyInstance(encoder->state);
         encoder->state = NULL;
     }
-#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
-    if (encoder->prepared_dict) {
-        BrotliEncoderDestroyPreparedDictionary(encoder->prepared_dict);
-        encoder->prepared_dict = NULL;
-    }
-#endif
     encoder->dict = Qnil;
     encoder->finished = BROTLI_FALSE;
 }
@@ -511,6 +501,7 @@ brotli_encoder_attach_dictionary(brotli_encoder_t* encoder, VALUE opts)
         rb_raise(rb_eBrotli, "Failed to attach dictionary for compression");
     }
 
+    encoder->prepared_dict = NULL;
     encoder->dict = dict;
 #else
     rb_raise(rb_eBrotli, "Dictionary support not available in this build");
@@ -977,6 +968,9 @@ rb_reader_read(int argc, VALUE* argv, VALUE self)
 
     brotli_reader_fill_buffer(br, (size_t)len, (size_t)len, BROTLI_FALSE);
     if (RSTRING_LEN(br->output_buffer) == 0 && br->finished) {
+        if (!NIL_P(outbuf)) {
+            brotli_reader_with_outbuf(outbuf, rb_str_new("", 0));
+        }
         return Qnil;
     }
 
@@ -1004,10 +998,16 @@ rb_reader_readpartial(int argc, VALUE* argv, VALUE self)
 
     while (RSTRING_LEN(br->output_buffer) == 0) {
         if (br->finished) {
+            if (!NIL_P(outbuf)) {
+                brotli_reader_with_outbuf(outbuf, rb_str_new("", 0));
+            }
             rb_raise(rb_eEOFError, "end of file reached");
         }
         brotli_reader_fill_buffer(br, 1, (size_t)len, BROTLI_TRUE);
         if (RSTRING_LEN(br->output_buffer) == 0 && br->finished) {
+            if (!NIL_P(outbuf)) {
+                brotli_reader_with_outbuf(outbuf, rb_str_new("", 0));
+            }
             rb_raise(rb_eEOFError, "end of file reached");
         }
     }
@@ -1277,6 +1277,7 @@ brotli_decompressor_free(void *p)
     }
     br->dict = Qnil;
     br->pending_input = Qnil;
+    br->needs_more_output = BROTLI_FALSE;
     br->finished = BROTLI_FALSE;
     ruby_xfree(br);
 }
@@ -1301,6 +1302,7 @@ rb_decompressor_alloc(VALUE klass)
     br->state = BrotliDecoderCreateInstance(brotli_alloc, brotli_free, NULL);
     br->dict = Qnil;
     br->pending_input = Qnil;
+    br->needs_more_output = BROTLI_FALSE;
     br->finished = BROTLI_FALSE;
     if (!br->state) {
         rb_raise(rb_eNoMemError, "BrotliDecoderCreateInstance failed");
@@ -1357,6 +1359,13 @@ brotli_decompressor_has_pending_input(const brotli_decompressor_t *br)
     return !NIL_P(br->pending_input) && RSTRING_LEN(br->pending_input) > 0;
 }
 
+static BROTLI_BOOL
+brotli_decompressor_needs_output_drain(const brotli_decompressor_t *br)
+{
+    return br->needs_more_output || brotli_decompressor_has_pending_input(br) ||
+           BrotliDecoderHasMoreOutput(br->state);
+}
+
 static void
 brotli_decompressor_store_pending_input(brotli_decompressor_t* br,
                                         const uint8_t* next_in,
@@ -1411,12 +1420,16 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
     }
 
     StringValue(input);
-    if (brotli_decompressor_has_pending_input(br)) {
+    if (brotli_decompressor_needs_output_drain(br)) {
         if (RSTRING_LEN(input) > 0) {
             rb_raise(rb_eBrotli,
                      "Decompressor cannot accept more data until pending output is drained");
         }
-        input_source = br->pending_input;
+        if (brotli_decompressor_has_pending_input(br)) {
+            input_source = br->pending_input;
+        } else {
+            input_source = input;
+        }
     } else {
         input_source = input;
     }
@@ -1424,6 +1437,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
     available_in = (size_t)RSTRING_LEN(input_source);
     next_in = (const uint8_t*)RSTRING_PTR(input_source);
     br->pending_input = Qnil;
+    br->needs_more_output = BROTLI_FALSE;
     output = rb_str_new("", 0);
 
     for (;;) {
@@ -1436,6 +1450,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
             size_t used = (size_t)RSTRING_LEN(output);
             if (used >= output_buffer_limit) {
                 brotli_decompressor_store_pending_input(br, next_in, available_in);
+                br->needs_more_output = BROTLI_TRUE;
                 break;
             }
             if (output_buffer_limit - used < chunk_size) {
@@ -1459,17 +1474,20 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         if (result == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
             if (limit_output && (size_t)RSTRING_LEN(output) >= output_buffer_limit) {
                 brotli_decompressor_store_pending_input(br, next_in, available_in);
+                br->needs_more_output = BROTLI_TRUE;
                 break;
             }
             continue;
         }
         if (result == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT) {
             br->pending_input = Qnil;
+            br->needs_more_output = BROTLI_FALSE;
             break;
         }
         if (result == BROTLI_DECODER_RESULT_SUCCESS) {
             br->finished = BROTLI_TRUE;
             br->pending_input = Qnil;
+            br->needs_more_output = BROTLI_FALSE;
             if (available_in > 0) {
                 rb_raise(rb_eBrotli, "Excessive input");
             }
@@ -1509,7 +1527,7 @@ rb_decompressor_can_accept_more_data(VALUE self)
     if (!br->state) {
         rb_raise(rb_eBrotli, "Decompressor is closed");
     }
-    return (br->finished || brotli_decompressor_has_pending_input(br)) ? Qfalse : Qtrue;
+    return (br->finished || brotli_decompressor_needs_output_drain(br)) ? Qfalse : Qtrue;
 }
 
 /*******************************************************************************

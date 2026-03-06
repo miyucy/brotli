@@ -110,6 +110,26 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal expected, decompressed
   end
 
+  test "decompressor requires draining when one input chunk exceeds output_buffer_limit" do
+    data = ("hello world\n" * 5_000)
+    compressed = Brotli.deflate(data)
+    decompressor = Brotli::Decompressor.new
+    decompressed = +""
+
+    output = decompressor.process(compressed, output_buffer_limit: 256)
+
+    assert_operator output.bytesize, :<=, 256
+    assert_equal false, decompressor.can_accept_more_data
+    decompressed << output
+
+    until decompressor.finished?
+      assert_equal false, decompressor.can_accept_more_data
+      decompressed << decompressor.process("", output_buffer_limit: 256)
+    end
+
+    assert_equal data, decompressed
+  end
+
   test "decompressor rejects new input while output is still pending" do
     compressed = File.binread(fixture("zerosukkanooa.compressed"))
     decompressor = Brotli::Decompressor.new
