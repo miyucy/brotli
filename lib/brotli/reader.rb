@@ -4,6 +4,7 @@ module Brotli
   class Reader
     DEFAULT_READ_SIZE = 8192
     DEFAULT_SEPARATOR = Object.new
+    NEWLINE_BYTE = "\n".ord
 
     def initialize(io, options = nil, **kwargs)
       raise ArgumentError, "io should not be nil" if io.nil?
@@ -57,27 +58,13 @@ module Brotli
     def gets(separator = DEFAULT_SEPARATOR)
       ensure_open
 
-      separator = default_separator if separator.equal?(DEFAULT_SEPARATOR)
+      separator = resolve_separator(separator)
+      return read_to_end if separator.nil?
 
-      if separator.nil?
-        drain_stream
-        return nil if @output_buffer.empty?
+      separator, paragraph_mode = normalize_separator(separator)
+      length = next_gets_length(separator, paragraph_mode)
+      return nil unless length
 
-        return take_output
-      end
-
-      separator = coerce_string(separator)
-      paragraph_mode = separator.empty?
-      separator = "\n\n" if paragraph_mode
-
-      index = fill_until_separator(separator)
-
-      return nil if @output_buffer.empty?
-
-      return take_output(@output_buffer.bytesize) unless index
-
-      length = index + separator.bytesize
-      length = paragraph_length(length) if paragraph_mode
       take_output(length)
     end
 
@@ -164,13 +151,22 @@ module Brotli
       index
     end
 
-    def paragraph_length(length)
-      until @finished || @output_buffer.getbyte(length) != 10
+    def paragraph_end_length(length)
+      until @finished || @output_buffer.getbyte(length) != NEWLINE_BYTE
         fill_buffer(length + 1, output_limit: @output_buffer.bytesize + DEFAULT_READ_SIZE, stop_after_output: true)
       end
 
-      length += 1 while @output_buffer.getbyte(length) == 10
+      length += 1 while @output_buffer.getbyte(length) == NEWLINE_BYTE
       length
+    end
+
+    def next_gets_length(separator, paragraph_mode)
+      index = fill_until_separator(separator)
+      return if @output_buffer.empty?
+      return @output_buffer.bytesize unless index
+
+      length = index + separator.bytesize
+      paragraph_mode ? paragraph_end_length(length) : length
     end
 
     def fill_buffer(wanted, output_limit: nil, stop_after_output: false)
@@ -226,8 +222,22 @@ module Brotli
       String.try_convert(value) || raise(TypeError, "no implicit conversion of #{value.class} into String")
     end
 
-    def default_separator
-      $/
+    def normalize_separator(separator)
+      separator = coerce_string(separator)
+      return ["\n\n", true] if separator.empty?
+
+      [separator, false]
+    end
+
+    def read_to_end
+      drain_stream
+      return nil if @output_buffer.empty?
+
+      take_output
+    end
+
+    def resolve_separator(separator)
+      separator.equal?(DEFAULT_SEPARATOR) ? $/ : separator
     end
   end
 end
