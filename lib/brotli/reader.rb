@@ -57,7 +57,7 @@ module Brotli
     def gets(separator = DEFAULT_SEPARATOR)
       ensure_open
 
-      separator = $/ if separator.equal?(DEFAULT_SEPARATOR)
+      separator = default_separator if separator.equal?(DEFAULT_SEPARATOR)
 
       if separator.nil?
         drain_stream
@@ -67,17 +67,18 @@ module Brotli
       end
 
       separator = coerce_string(separator)
-      raise ArgumentError, "empty separator is not supported" if separator.empty?
+      paragraph_mode = separator.empty?
+      separator = "\n\n" if paragraph_mode
 
-      index = @output_buffer.index(separator)
-      until index || @finished
-        fill_buffer(@output_buffer.bytesize + 1)
-        index = @output_buffer.index(separator)
-      end
+      index = fill_until_separator(separator)
 
       return nil if @output_buffer.empty?
 
-      take_output(index ? index + separator.bytesize : @output_buffer.bytesize)
+      return take_output(@output_buffer.bytesize) unless index
+
+      length = index + separator.bytesize
+      length = paragraph_length(length) if paragraph_mode
+      take_output(length)
     end
 
     def each_line(*args)
@@ -148,6 +149,30 @@ module Brotli
       fill_buffer(@output_buffer.bytesize + 1) until @finished
     end
 
+    def fill_until_separator(separator)
+      index = @output_buffer.index(separator)
+
+      until index || @finished
+        fill_buffer(
+          @output_buffer.bytesize + 1,
+          output_limit: @output_buffer.bytesize + DEFAULT_READ_SIZE,
+          stop_after_output: true
+        )
+        index = @output_buffer.index(separator)
+      end
+
+      index
+    end
+
+    def paragraph_length(length)
+      until @finished || @output_buffer.getbyte(length) != 10
+        fill_buffer(length + 1, output_limit: @output_buffer.bytesize + DEFAULT_READ_SIZE, stop_after_output: true)
+      end
+
+      length += 1 while @output_buffer.getbyte(length) == 10
+      length
+    end
+
     def fill_buffer(wanted, output_limit: nil, stop_after_output: false)
       while @output_buffer.bytesize < wanted && !@finished
         buffered = @output_buffer.bytesize
@@ -199,6 +224,10 @@ module Brotli
 
     def coerce_string(value)
       String.try_convert(value) || raise(TypeError, "no implicit conversion of #{value.class} into String")
+    end
+
+    def default_separator
+      $/
     end
   end
 end

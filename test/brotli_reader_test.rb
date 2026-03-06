@@ -197,6 +197,35 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_nil reader.gets(nil)
   end
 
+  test "gets empty separator uses paragraph mode" do
+    text = "alpha\n\n\nbeta\n\n".b
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
+
+    assert_equal "alpha\n\n\n", reader.gets("")
+    assert_equal "beta\n\n", reader.gets("")
+    assert_nil reader.gets("")
+  end
+
+  test "gets uses global paragraph separator" do
+    original_separator = $/
+    $/ = ""
+
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate("alpha\n\nbeta\n\n")))
+    assert_equal "alpha\n\n", reader.gets
+    assert_equal "beta\n\n", reader.gets
+    assert_nil reader.gets
+  ensure
+    $/ = original_separator
+  end
+
+  test "gets does not buffer the whole stream to find one line" do
+    text = ("line\n" * 50_000).b
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
+
+    assert_equal "line\n", reader.gets
+    assert_operator reader.instance_variable_get(:@output_buffer).bytesize, :<, Brotli::Reader::DEFAULT_READ_SIZE * 2
+  end
+
   test "close and closed?" do
     io = StringIO.new(Brotli.deflate("hello"))
     reader = Brotli::Reader.new(io)
