@@ -130,42 +130,16 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_equal data, output
   end
 
-  test "gets and each_line" do
-    text = "alpha\nbeta\ngamma\n"
-    io = StringIO.new(Brotli.deflate(text))
-    reader = Brotli::Reader.new(io)
-
-    assert_equal "alpha\n", reader.gets
-    assert_equal "beta\n", reader.gets
-    assert_equal "gamma\n", reader.gets
-    assert_nil reader.gets
-
-    io2 = StringIO.new(Brotli.deflate(text))
-    reader2 = Brotli::Reader.new(io2)
-    assert_equal ["alpha\n", "beta\n", "gamma\n"], reader2.each_line.to_a
-  end
-
-  test "each_line handles many lines buffered from one compressed chunk" do
-    text = ("line\n" * 5_000).b
-    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
-    count = 0
-
-    reader.each_line do |line|
-      assert_equal "line\n", line
-      count += 1
-    end
-
-    assert_equal 5_000, count
-  end
-
   test "reader can continue after compacting a large buffered block" do
     text = (("line\n" * 6_000) + "tail").b
     reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
+    output = +""
 
     5_500.times do
-      assert_equal "line\n", reader.gets
+      output << reader.read(5)
     end
 
+    assert_equal "line\n" * 5_500, output
     assert_equal(("line\n" * 500) + "tail", reader.read)
   end
 
@@ -175,55 +149,11 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_equal false, reader.eof?
     assert_equal "a", reader.read(1)
     assert_equal "l", reader.readpartial(1)
-    assert_equal "pha\n", reader.gets
-    assert_equal "beta\n", reader.gets
-    assert_nil reader.gets
+    assert_equal "pha\n", reader.read(4)
+    assert_equal "bet", reader.readpartial(5)
+    assert_equal "a\n", reader.readpartial(5)
+    assert_nil reader.read(1)
     assert_equal true, reader.eof?
-  end
-
-  test "gets nil returns remaining data once and then nil" do
-    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate("hello")))
-
-    assert_equal "hello", reader.gets(nil)
-    assert_nil reader.gets(nil)
-
-    reader2 = Brotli::Reader.new(StringIO.new(Brotli.deflate("hello")))
-    assert_equal ["hello"], reader2.each_line(nil).first(2)
-  end
-
-  test "gets nil returns nil for an empty stream" do
-    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate("")))
-
-    assert_nil reader.gets(nil)
-  end
-
-  test "gets empty separator uses paragraph mode" do
-    text = "alpha\n\n\nbeta\n\n".b
-    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
-
-    assert_equal "alpha\n\n\n", reader.gets("")
-    assert_equal "beta\n\n", reader.gets("")
-    assert_nil reader.gets("")
-  end
-
-  test "gets uses global paragraph separator" do
-    original_separator = $/
-    $/ = ""
-
-    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate("alpha\n\nbeta\n\n")))
-    assert_equal "alpha\n\n", reader.gets
-    assert_equal "beta\n\n", reader.gets
-    assert_nil reader.gets
-  ensure
-    $/ = original_separator
-  end
-
-  test "gets does not buffer the whole stream to find one line" do
-    text = ("line\n" * 50_000).b
-    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
-
-    assert_equal "line\n", reader.gets
-    assert_operator reader.instance_variable_get(:@output_buffer).bytesize, :<, Brotli::Reader::DEFAULT_READ_SIZE * 2
   end
 
   test "close and closed?" do
