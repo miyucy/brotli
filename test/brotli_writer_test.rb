@@ -28,6 +28,35 @@ class BrotliWriterTest < Test::Unit::TestCase
     assert_equal testdata, Brotli.inflate(@tempfile.read)
   end
 
+  test "close still closes io when finish raises" do
+    original_finish = Brotli::Compressor.instance_method(:finish)
+    Brotli::Compressor.class_eval do
+      remove_method :finish
+      define_method(:finish) do
+        raise Brotli::Error, "finish failed"
+      end
+    end
+
+    writer = Brotli::Writer.new(@tempfile)
+
+    error = assert_raise(Brotli::Error) do
+      writer.close
+    end
+
+    assert_equal "finish failed", error.message
+    assert_equal true, @tempfile.closed?
+
+    closed_error = assert_raise(Brotli::Error) do
+      writer.write("abc")
+    end
+    assert_equal "Writer is closed", closed_error.message
+  ensure
+    Brotli::Compressor.class_eval do
+      remove_method :finish
+      define_method(:finish, original_finish)
+    end
+  end
+
   test "raise" do
     assert_raise do
       Brotli::Writer.new nil

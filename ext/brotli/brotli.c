@@ -688,6 +688,25 @@ rb_writer_flush(VALUE self)
 }
 
 static VALUE
+rb_writer_close_ensure(VALUE self)
+{
+    brotli_writer_t* br;
+    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
+
+    if (br->closed) {
+        return Qnil;
+    }
+
+    if (rb_respond_to(br->io, id_close)) {
+        rb_funcall(br->io, id_close, 0);
+    }
+
+    br->closed = BROTLI_TRUE;
+    br->compressor = Qnil;
+    return Qnil;
+}
+
+static VALUE
 rb_writer_close(VALUE self)
 {
     brotli_writer_t* br;
@@ -697,15 +716,7 @@ rb_writer_close(VALUE self)
         return br->io;
     }
 
-    rb_writer_finish(self);
-
-    if (rb_respond_to(br->io, id_close)) {
-        rb_funcall(br->io, id_close, 0);
-    }
-
-    br->closed = BROTLI_TRUE;
-    br->compressor = Qnil;
-    return br->io;
+    return rb_ensure(rb_writer_finish, self, rb_writer_close_ensure, self);
 }
 
 /*******************************************************************************
