@@ -34,34 +34,27 @@ $INCFLAGS << " -I$(srcdir)/enc -I$(srcdir)/dec -I$(srcdir)/common -I$(srcdir)/in
 create_makefile("brotli/brotli")
 
 unless have_dev_pkg
-  __DIR__ = File.expand_path(File.dirname(__FILE__))
+  ext_dir = __dir__
+  vendor_dir = File.expand_path("../../vendor/brotli/c", __dir__)
+  objext = RbConfig::CONFIG["OBJEXT"]
 
   %w[enc dec common include].each do |dirname|
     FileUtils.rm_rf dirname
     FileUtils.mkdir_p dirname
-    FileUtils.cp_r(
-      File.expand_path(File.join(__DIR__, "..", "..", "vendor", "brotli", "c", dirname), __DIR__),
-      __DIR__,
-      verbose: true
-    )
+    FileUtils.cp_r(File.join(vendor_dir, dirname), ext_dir)
   end
 
   srcs = []
   objs = []
-  Dir[File.expand_path(File.join("{enc,dec,common,include}", "**", "*.c"), __DIR__)].sort.each do |file|
-    file[__DIR__ + File::SEPARATOR] = ""
+  Dir[File.expand_path(File.join("{enc,dec,common,include}", "**", "*.c"), ext_dir)].sort.each do |file|
+    file["#{ext_dir}#{File::SEPARATOR}"] = ""
     srcs << file
-    objs << file.sub(/\.c\z/, "." + RbConfig::CONFIG["OBJEXT"])
+    objs << file.sub(/\.c\z/, ".#{objext}")
   end
 
-  File.open("Makefile", "r+") do |f|
-    obj_ext = RbConfig::CONFIG["OBJEXT"]
-    src = "ORIG_SRCS = brotli.c buffer.c"
-    obj = "OBJS = brotli.#{obj_ext} buffer.#{obj_ext}"
-    txt = f.read
-           .sub(/^ORIG_SRCS = .*$/, "#{src} #{srcs.join(" ")}")
-           .sub(/^OBJS = .*$/, "#{obj} #{objs.join(" ")}")
-    f.rewind
-    f.write txt
-  end
+  makefile = File.read("Makefile")
+  makefile = makefile
+             .sub(/^ORIG_SRCS = .*$/, "ORIG_SRCS = brotli.c buffer.c #{srcs.join(" ")}")
+             .sub(/^OBJS = .*$/, "OBJS = brotli.#{objext} buffer.#{objext} #{objs.join(" ")}")
+  File.write("Makefile", makefile)
 end

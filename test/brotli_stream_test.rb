@@ -15,8 +15,11 @@ class BrotliStreamTest < Test::Unit::TestCase
 
   test "compressor process and finish" do
     compressor = Brotli::Compressor.new
+    assert_equal false, compressor.finished?
     compressed = compressor.process(testdata)
+    assert_equal false, compressor.finished?
     compressed << compressor.finish
+    assert_equal true, compressor.finished?
 
     assert_equal testdata, Brotli.inflate(compressed)
   end
@@ -80,6 +83,7 @@ class BrotliStreamTest < Test::Unit::TestCase
     compressor = Brotli::Compressor.new
     compressor.process("abc")
     compressor.finish
+    assert_equal true, compressor.finished?
 
     assert_raise Brotli::Error do
       compressor.process("def")
@@ -92,10 +96,22 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal "", compressor.finish
   end
 
+  test "compressor initialize resets encoder state" do
+    compressor = Brotli::Compressor.new
+    compressor.process("ignored")
+
+    compressor.send(:initialize, quality: 0)
+    compressed = compressor.process("hello")
+    compressed << compressor.finish
+
+    assert_equal "hello", Brotli.inflate(compressed)
+  end
+
   test "decompressor process in chunks" do
     compressed = Brotli.deflate(testdata)
     decompressor = Brotli::Decompressor.new
     decompressed = +""
+    assert_equal true, decompressor.can_accept_more_data?
 
     compressed.bytes.each_slice(7) do |chunk|
       decompressed << decompressor.process(chunk.pack("C*"))
@@ -104,6 +120,7 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal true, decompressor.is_finished
     assert_equal true, decompressor.finished?
     assert_equal false, decompressor.can_accept_more_data
+    assert_equal false, decompressor.can_accept_more_data?
     assert_equal testdata, decompressed
   end
 
@@ -129,6 +146,17 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_raise Brotli::Error do
       decompressor.process("x")
     end
+  end
+
+  test "decompressor initialize resets buffered state" do
+    decompressor = Brotli::Decompressor.new
+    decompressor.process(Brotli.deflate("ignored" * 1_000), output_buffer_limit: 32)
+
+    decompressor.send(:initialize)
+
+    assert_equal "hello", decompressor.process(Brotli.deflate("hello"))
+    assert_equal true, decompressor.finished?
+    assert_equal "", decompressor.unused_data
   end
 
   test "decompressor output_buffer_limit can bound streaming output" do
@@ -182,10 +210,12 @@ class BrotliStreamTest < Test::Unit::TestCase
 
     assert_operator output.bytesize, :<=, 256
     assert_equal false, decompressor.can_accept_more_data
+    assert_equal false, decompressor.can_accept_more_data?
     decompressed << output
 
     until decompressor.finished?
       assert_equal false, decompressor.can_accept_more_data
+      assert_equal false, decompressor.can_accept_more_data?
       decompressed << decompressor.process("", output_buffer_limit: 256)
     end
 

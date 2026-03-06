@@ -50,6 +50,10 @@ module Brotli
       @io
     end
 
+    def closed?
+      @closed
+    end
+
     private
 
     def ensure_open

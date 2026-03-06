@@ -1,21 +1,65 @@
 #include "brotli.h"
 
-#define CSTR2SYM(x) ID2SYM(rb_intern(x))
-
 static VALUE rb_eBrotli;
+static ID id_cmp;
+static ID id_dictionary;
+static ID id_font;
+static ID id_generic;
+static ID id_lgblock;
+static ID id_lgwin;
+static ID id_mode;
+static ID id_output_buffer_limit;
+static ID id_quality;
+static ID id_read;
+static ID id_text;
 
 static inline void*
 brotli_alloc(void* opaque, size_t size)
 {
+    (void)opaque;
     return ruby_xmalloc(size);
 }
 
 static inline void
 brotli_free(void* opaque, void* address)
 {
-    if (address) {
-        ruby_xfree(address);
+    (void)opaque;
+    ruby_xfree(address);
+}
+
+static VALUE
+brotli_hash_lookup(VALUE hash, ID key)
+{
+    if (NIL_P(hash)) {
+        return Qnil;
     }
+
+    Check_Type(hash, T_HASH);
+    return rb_hash_lookup(hash, ID2SYM(key));
+}
+
+static BrotliEncoderState*
+brotli_encoder_state_create(void)
+{
+    BrotliEncoderState* state = BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL);
+
+    if (!state) {
+        rb_raise(rb_eNoMemError, "BrotliEncoderCreateInstance failed");
+    }
+
+    return state;
+}
+
+static BrotliDecoderState*
+brotli_decoder_state_create(void)
+{
+    BrotliDecoderState* state = BrotliDecoderCreateInstance(brotli_alloc, brotli_free, NULL);
+
+    if (!state) {
+        rb_raise(rb_eNoMemError, "BrotliDecoderCreateInstance failed");
+    }
+
+    return state;
 }
 
 /*******************************************************************************
@@ -31,6 +75,17 @@ typedef struct {
     uint8_t* dict;
     size_t dict_len;
 } brotli_inflate_args_t;
+
+static void
+brotli_inflate_cleanup(brotli_inflate_args_t* args)
+{
+    delete_buffer(args->buffer);
+    args->buffer = NULL;
+    if (args->s) {
+        BrotliDecoderDestroyInstance(args->s);
+        args->s = NULL;
+    }
+}
 
 static void*
 brotli_inflate_no_gvl(void *arg)
@@ -78,37 +133,33 @@ brotli_inflate_no_gvl(void *arg)
     return arg;
 }
 
-static ID id_read;
-
 static VALUE
 brotli_inflate(int argc, VALUE *argv, VALUE self)
 {
-    VALUE str = Qnil, opts = Qnil, value = Qnil, dict = Qnil;
+    VALUE str = Qnil;
+    VALUE opts = Qnil;
+    VALUE value = Qnil;
+    VALUE dict = Qnil;
+    const char *error = NULL;
     brotli_inflate_args_t args;
+
+    (void)self;
 
     rb_scan_args(argc, argv, "11", &str, &opts);
 
     if (rb_respond_to(str, id_read)) {
-      str = rb_funcall(str, id_read, 0, 0);
+        str = rb_funcall(str, id_read, 0);
     }
 
     StringValue(str);
-
-    /* Extract dictionary from options if provided */
-    if (!NIL_P(opts)) {
-        Check_Type(opts, T_HASH);
-        dict = rb_hash_aref(opts, CSTR2SYM("dictionary"));
-    }
+    dict = brotli_hash_lookup(opts, id_dictionary);
 
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
+    args.s = brotli_decoder_state_create();
     args.buffer = create_buffer(BUFSIZ);
-    args.s = BrotliDecoderCreateInstance(brotli_alloc,
-                                         brotli_free,
-                                         NULL);
     args.r = BROTLI_DECODER_RESULT_ERROR;
 
-    /* Set dictionary parameters */
     if (!NIL_P(dict)) {
 #ifdef HAVE_BROTLIDECODERATTACHDICTIONARY
         StringValue(dict);
@@ -123,28 +174,27 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     }
 
 #ifdef HAVE_RUBY_THREAD_H
-    rb_thread_call_without_gvl(brotli_inflate_no_gvl, (void *)&args, NULL, NULL);
+    rb_thread_call_without_gvl(brotli_inflate_no_gvl, &args, NULL, NULL);
 #else
-    brotli_inflate_no_gvl((void *)&args);
+    brotli_inflate_no_gvl(&args);
 #endif
+    RB_GC_GUARD(str);
+    RB_GC_GUARD(dict);
+
     if (args.r == BROTLI_DECODER_RESULT_SUCCESS) {
         value = rb_str_new(args.buffer->ptr, args.buffer->used);
-        delete_buffer(args.buffer);
-        BrotliDecoderDestroyInstance(args.s);
     } else if (args.r == BROTLI_DECODER_RESULT_ERROR) {
-        const char * error = BrotliDecoderErrorString(BrotliDecoderGetErrorCode(args.s));
-        delete_buffer(args.buffer);
-        BrotliDecoderDestroyInstance(args.s);
-        rb_raise(rb_eBrotli, "%s", error);
+        error = BrotliDecoderErrorString(BrotliDecoderGetErrorCode(args.s));
     } else if (args.r == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT) {
-        delete_buffer(args.buffer);
-        BrotliDecoderDestroyInstance(args.s);
-        rb_raise(rb_eBrotli, "Needs more input");
-    } else if (args.r == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
-        /* never reach to this block */
-        delete_buffer(args.buffer);
-        BrotliDecoderDestroyInstance(args.s);
-        rb_raise(rb_eBrotli, "Needs more output");
+        error = "Needs more input";
+    } else {
+        error = "Needs more output";
+    }
+
+    brotli_inflate_cleanup(&args);
+
+    if (error) {
+        rb_raise(rb_eBrotli, "%s", error);
     }
 
     return value;
@@ -159,76 +209,77 @@ brotli_deflate_set_mode(BrotliEncoderState* s, VALUE value)
 {
     if (NIL_P(value)) {
         return;
+    }
+
+    if (value == ID2SYM(id_generic)) {
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_MODE, BROTLI_MODE_GENERIC);
+    } else if (value == ID2SYM(id_text)) {
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_MODE, BROTLI_MODE_TEXT);
+    } else if (value == ID2SYM(id_font)) {
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_MODE, BROTLI_MODE_FONT);
     } else {
-        if (value == CSTR2SYM("generic")) {
-            BrotliEncoderSetParameter(s, BROTLI_PARAM_MODE, BROTLI_MODE_GENERIC);
-        } else if (value == CSTR2SYM("text")) {
-            BrotliEncoderSetParameter(s, BROTLI_PARAM_MODE, BROTLI_MODE_TEXT);
-        } else if (value == CSTR2SYM("font")) {
-            BrotliEncoderSetParameter(s, BROTLI_PARAM_MODE, BROTLI_MODE_FONT);
-        } else {
-            rb_raise(rb_eArgError, "invalid mode");
-        }
+        rb_raise(rb_eArgError, "invalid mode");
     }
 }
 
 static void
 brotli_deflate_set_quality(BrotliEncoderState* s, VALUE value)
 {
+    int32_t param;
+
     if (NIL_P(value)) {
         return;
+    }
+
+    param = NUM2INT(value);
+    if (0 <= param && param <= 11) {
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_QUALITY, param);
     } else {
-        int32_t param = NUM2INT(value);
-        if (0 <= param && param <= 11) {
-            BrotliEncoderSetParameter(s, BROTLI_PARAM_QUALITY, param);
-        } else {
-            rb_raise(rb_eArgError, "invalid quality value. Should be 0 to 11.");
-        }
+        rb_raise(rb_eArgError, "invalid quality value. Should be 0 to 11.");
     }
 }
 
 static void
 brotli_deflate_set_lgwin(BrotliEncoderState* s, VALUE value)
 {
+    int32_t param;
+
     if (NIL_P(value)) {
         return;
+    }
+
+    param = NUM2INT(value);
+    if (10 <= param && param <= 24) {
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_LGWIN, param);
     } else {
-        int32_t param = NUM2INT(value);
-        if (10 <= param && param <= 24) {
-            BrotliEncoderSetParameter(s, BROTLI_PARAM_LGWIN, param);
-        } else {
-            rb_raise(rb_eArgError, "invalid lgwin value. Should be 10 to 24.");
-        }
+        rb_raise(rb_eArgError, "invalid lgwin value. Should be 10 to 24.");
     }
 }
 
 static void
 brotli_deflate_set_lgblock(BrotliEncoderState* s, VALUE value)
 {
+    int32_t param;
+
     if (NIL_P(value)) {
         return;
+    }
+
+    param = NUM2INT(value);
+    if (param == 0 || (16 <= param && param <= 24)) {
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_LGBLOCK, param);
     } else {
-        int32_t param = NUM2INT(value);
-        if ((param == 0) || (16 <= param && param <= 24)) {
-            BrotliEncoderSetParameter(s, BROTLI_PARAM_LGBLOCK, param);
-        } else {
-            rb_raise(rb_eArgError, "invalid lgblock value. Should be 0 or 16 to 24.");
-        }
+        rb_raise(rb_eArgError, "invalid lgblock value. Should be 0 or 16 to 24.");
     }
 }
 
-static BrotliEncoderState*
+static void
 brotli_deflate_parse_options(BrotliEncoderState* s, VALUE opts)
 {
-    if (!NIL_P(opts)) {
-        Check_Type(opts, T_HASH);
-        brotli_deflate_set_mode(s, rb_hash_aref(opts, CSTR2SYM("mode")));
-        brotli_deflate_set_quality(s, rb_hash_aref(opts, CSTR2SYM("quality")));
-        brotli_deflate_set_lgwin(s, rb_hash_aref(opts, CSTR2SYM("lgwin")));
-        brotli_deflate_set_lgblock(s, rb_hash_aref(opts, CSTR2SYM("lgblock")));
-    }
-
-    return s;
+    brotli_deflate_set_mode(s, brotli_hash_lookup(opts, id_mode));
+    brotli_deflate_set_quality(s, brotli_hash_lookup(opts, id_quality));
+    brotli_deflate_set_lgwin(s, brotli_hash_lookup(opts, id_lgwin));
+    brotli_deflate_set_lgblock(s, brotli_hash_lookup(opts, id_lgblock));
 }
 
 typedef struct {
@@ -241,6 +292,23 @@ typedef struct {
     BrotliEncoderPreparedDictionary* prepared_dict;
 #endif
 } brotli_deflate_args_t;
+
+static void
+brotli_deflate_cleanup(brotli_deflate_args_t* args)
+{
+    delete_buffer(args->buffer);
+    args->buffer = NULL;
+    if (args->s) {
+        BrotliEncoderDestroyInstance(args->s);
+        args->s = NULL;
+    }
+#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
+    if (args->prepared_dict) {
+        BrotliEncoderDestroyPreparedDictionary(args->prepared_dict);
+        args->prepared_dict = NULL;
+    }
+#endif
+}
 
 static void*
 brotli_deflate_no_gvl(void *arg)
@@ -282,32 +350,30 @@ brotli_deflate_no_gvl(void *arg)
 static VALUE
 brotli_deflate(int argc, VALUE *argv, VALUE self)
 {
-    VALUE str = Qnil, opts = Qnil, value = Qnil, dict = Qnil;
+    VALUE str = Qnil;
+    VALUE opts = Qnil;
+    VALUE value = Qnil;
+    VALUE dict = Qnil;
     brotli_deflate_args_t args;
+    size_t max_compressed_size;
+
+    (void)self;
 
     rb_scan_args(argc, argv, "11", &str, &opts);
     if (NIL_P(str)) {
         rb_raise(rb_eArgError, "input should not be nil");
-        return Qnil;
     }
     StringValue(str);
-
-    /* Extract dictionary from options if provided */
-    if (!NIL_P(opts)) {
-        Check_Type(opts, T_HASH);
-        dict = rb_hash_aref(opts, CSTR2SYM("dictionary"));
-    }
+    dict = brotli_hash_lookup(opts, id_dictionary);
 
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
-    args.s = brotli_deflate_parse_options(
-        BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL),
-        opts);
-    size_t max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
+    args.s = brotli_encoder_state_create();
+    brotli_deflate_parse_options(args.s, opts);
+    max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
     args.buffer = create_buffer(max_compressed_size);
     args.finished = BROTLI_FALSE;
 
-    /* Set dictionary parameters */
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     args.prepared_dict = NULL;
 #endif
@@ -323,43 +389,31 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
             brotli_free,
             NULL);
         if (!args.prepared_dict) {
-            delete_buffer(args.buffer);
-            BrotliEncoderDestroyInstance(args.s);
+            brotli_deflate_cleanup(&args);
             rb_raise(rb_eBrotli, "Failed to prepare dictionary for compression");
         }
         if (!BrotliEncoderAttachPreparedDictionary(args.s, args.prepared_dict)) {
-            BrotliEncoderDestroyPreparedDictionary(args.prepared_dict);
-            args.prepared_dict = NULL;
-            delete_buffer(args.buffer);
-            BrotliEncoderDestroyInstance(args.s);
+            brotli_deflate_cleanup(&args);
             rb_raise(rb_eBrotli, "Failed to attach dictionary for compression");
         }
 #else
-        delete_buffer(args.buffer);
-        BrotliEncoderDestroyInstance(args.s);
+        brotli_deflate_cleanup(&args);
         rb_raise(rb_eBrotli, "Dictionary support not available in this build");
 #endif
     }
 
 #ifdef HAVE_RUBY_THREAD_H
-    rb_thread_call_without_gvl(brotli_deflate_no_gvl, (void *)&args, NULL, NULL);
+    rb_thread_call_without_gvl(brotli_deflate_no_gvl, &args, NULL, NULL);
 #else
-    brotli_deflate_no_gvl((void *)&args);
+    brotli_deflate_no_gvl(&args);
 #endif
     RB_GC_GUARD(str);
+    RB_GC_GUARD(dict);
     if (args.finished == BROTLI_TRUE) {
         value = rb_str_new(args.buffer->ptr, args.buffer->used);
     }
 
-    delete_buffer(args.buffer);
-    BrotliEncoderDestroyInstance(args.s);
-#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
-    /* Prepared dictionaries remain caller-owned after attach. */
-    if (args.prepared_dict) {
-        BrotliEncoderDestroyPreparedDictionary(args.prepared_dict);
-        args.prepared_dict = NULL;
-    }
-#endif
+    brotli_deflate_cleanup(&args);
 
     if (args.finished != BROTLI_TRUE) {
         rb_raise(rb_eBrotli, "Failed to compress");
@@ -375,6 +429,8 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
 static VALUE brotli_version(VALUE klass) {
     uint32_t ver = BrotliEncoderVersion();
     char version[255];
+
+    (void)klass;
     snprintf(version, sizeof(version), "%u.%u.%u", ver >> 24, (ver >> 12) & 0xFFF, ver & 0xFFF);
     return rb_str_new2(version);
 }
@@ -492,7 +548,6 @@ brotli_encoder_destroy(brotli_encoder_t* encoder)
         encoder->state = NULL;
     }
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
-    /* Prepared dictionaries remain caller-owned after attach. */
     if (encoder->prepared_dict) {
         BrotliEncoderDestroyPreparedDictionary(encoder->prepared_dict);
         encoder->prepared_dict = NULL;
@@ -502,6 +557,13 @@ brotli_encoder_destroy(brotli_encoder_t* encoder)
     encoder->dict_data = NULL;
     encoder->dict_len = 0;
     encoder->finished = BROTLI_FALSE;
+}
+
+static void
+brotli_encoder_reset(brotli_encoder_t* encoder)
+{
+    brotli_encoder_destroy(encoder);
+    encoder->state = brotli_encoder_state_create();
 }
 
 static void
@@ -519,14 +581,8 @@ brotli_encoder_take_output_to_string(BrotliEncoderState* state, VALUE output)
 static void
 brotli_encoder_attach_dictionary(brotli_encoder_t* encoder, VALUE opts)
 {
-    VALUE dict = Qnil;
+    VALUE dict = brotli_hash_lookup(opts, id_dictionary);
 
-    if (NIL_P(opts)) {
-        return;
-    }
-
-    Check_Type(opts, T_HASH);
-    dict = rb_hash_aref(opts, CSTR2SYM("dictionary"));
     if (NIL_P(dict)) {
         return;
     }
@@ -568,7 +624,7 @@ brotli_encoder_stream_to_string(brotli_encoder_t* encoder,
                                 const uint8_t* input,
                                 size_t input_len)
 {
-    VALUE output = rb_str_new("", 0);
+    VALUE output = rb_str_buf_new(BUFSIZ);
     brotli_encoder_args_t args = {
         .state = encoder->state,
         .op = op,
@@ -611,12 +667,6 @@ brotli_encoder_stream_to_string(brotli_encoder_t* encoder,
  ******************************************************************************/
 
 static void
-brotli_compressor_mark(void *p)
-{
-    (void)p;
-}
-
-static void
 brotli_compressor_free(void *p)
 {
     brotli_compressor_t* br = p;
@@ -627,12 +677,13 @@ brotli_compressor_free(void *p)
 static size_t
 brotli_compressor_memsize(const void *p)
 {
-    return sizeof(brotli_compressor_t);
+    const brotli_compressor_t *br = p;
+    return sizeof(*br) + br->encoder.dict_len;
 }
 
 static const rb_data_type_t brotli_compressor_data_type = {
     "brotli_compressor",
-    { brotli_compressor_mark, brotli_compressor_free, brotli_compressor_memsize },
+    { 0, brotli_compressor_free, brotli_compressor_memsize },
     0, 0, RUBY_TYPED_FREE_IMMEDIATELY
 };
 
@@ -641,17 +692,13 @@ rb_compressor_alloc(VALUE klass)
 {
     brotli_compressor_t *br;
     VALUE obj = TypedData_Make_Struct(klass, brotli_compressor_t, &brotli_compressor_data_type, br);
-    br->encoder.state = BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL);
+    br->encoder.state = NULL;
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     br->encoder.prepared_dict = NULL;
 #endif
     br->encoder.dict_data = NULL;
     br->encoder.dict_len = 0;
     br->encoder.finished = BROTLI_FALSE;
-    if (!br->encoder.state) {
-        rb_raise(rb_eNoMemError, "BrotliEncoderCreateInstance failed");
-        return Qnil;
-    }
     return obj;
 }
 
@@ -672,6 +719,7 @@ rb_compressor_initialize(int argc, VALUE* argv, VALUE self)
     rb_scan_args(argc, argv, "01", &opts);
 
     TypedData_Get_Struct(self, brotli_compressor_t, &brotli_compressor_data_type, br);
+    brotli_encoder_reset(&br->encoder);
     brotli_deflate_parse_options(br->encoder.state, opts);
     brotli_encoder_attach_dictionary(&br->encoder, opts);
 
@@ -729,6 +777,16 @@ rb_compressor_finish(VALUE self)
     return output;
 }
 
+static VALUE
+rb_compressor_is_finished(VALUE self)
+{
+    brotli_compressor_t *br;
+
+    TypedData_Get_Struct(self, brotli_compressor_t, &brotli_compressor_data_type, br);
+    brotli_compressor_ensure_open(br);
+    return br->encoder.finished ? Qtrue : Qfalse;
+}
+
 /*******************************************************************************
  * Decompressor
  ******************************************************************************/
@@ -761,10 +819,34 @@ brotli_decompressor_free(void *p)
     ruby_xfree(br);
 }
 
+static void
+brotli_decompressor_set_pending_input(VALUE self, brotli_decompressor_t* br, VALUE pending_input)
+{
+    RB_OBJ_WRITE(self, &br->pending_input, pending_input);
+}
+
+static void
+brotli_decompressor_reset(VALUE self, brotli_decompressor_t* br)
+{
+    if (br->state) {
+        BrotliDecoderDestroyInstance(br->state);
+        br->state = NULL;
+    }
+
+    brotli_free(NULL, br->dict_data);
+    br->dict_data = NULL;
+    br->dict_len = 0;
+    brotli_decompressor_set_pending_input(self, br, Qnil);
+    br->needs_more_output = BROTLI_FALSE;
+    br->finished = BROTLI_FALSE;
+    br->state = brotli_decoder_state_create();
+}
+
 static size_t
 brotli_decompressor_memsize(const void *p)
 {
-    return sizeof(brotli_decompressor_t);
+    const brotli_decompressor_t *br = p;
+    return sizeof(*br) + br->dict_len;
 }
 
 #ifdef HAVE_RB_GC_MARK_MOVABLE
@@ -797,30 +879,19 @@ rb_decompressor_alloc(VALUE klass)
 {
     brotli_decompressor_t *br;
     VALUE obj = TypedData_Make_Struct(klass, brotli_decompressor_t, &brotli_decompressor_data_type, br);
-    br->state = BrotliDecoderCreateInstance(brotli_alloc, brotli_free, NULL);
+    br->state = NULL;
     br->dict_data = NULL;
     br->dict_len = 0;
     RB_OBJ_WRITE(obj, &br->pending_input, Qnil);
     br->needs_more_output = BROTLI_FALSE;
     br->finished = BROTLI_FALSE;
-    if (!br->state) {
-        rb_raise(rb_eNoMemError, "BrotliDecoderCreateInstance failed");
-        return Qnil;
-    }
     return obj;
 }
 
 static void
 brotli_decompressor_attach_dictionary(brotli_decompressor_t* br, VALUE opts)
 {
-    VALUE dict = Qnil;
-
-    if (NIL_P(opts)) {
-        return;
-    }
-
-    Check_Type(opts, T_HASH);
-    dict = rb_hash_aref(opts, CSTR2SYM("dictionary"));
+    VALUE dict = brotli_hash_lookup(opts, id_dictionary);
     if (NIL_P(dict)) {
         return;
     }
@@ -849,6 +920,7 @@ rb_decompressor_initialize(int argc, VALUE* argv, VALUE self)
 
     rb_scan_args(argc, argv, "01", &opts);
     TypedData_Get_Struct(self, brotli_decompressor_t, &brotli_decompressor_data_type, br);
+    brotli_decompressor_reset(self, br);
     brotli_decompressor_attach_dictionary(br, opts);
 
     return self;
@@ -870,15 +942,17 @@ brotli_decompressor_pending_input_length(const brotli_decompressor_t *br)
 }
 
 static void
-brotli_decompressor_set_pending_input(VALUE self, brotli_decompressor_t* br, VALUE pending_input)
-{
-    RB_OBJ_WRITE(self, &br->pending_input, pending_input);
-}
-
-static void
 brotli_decompressor_clear_pending_input(VALUE self, brotli_decompressor_t* br)
 {
     brotli_decompressor_set_pending_input(self, br, Qnil);
+}
+
+static void
+brotli_decompressor_ensure_open(const brotli_decompressor_t* br)
+{
+    if (!br->state) {
+        rb_raise(rb_eBrotli, "Decompressor is closed");
+    }
 }
 
 static BROTLI_BOOL
@@ -901,6 +975,22 @@ brotli_decompressor_store_pending_input(VALUE self,
     brotli_decompressor_set_pending_input(self, br, rb_str_new((const char*)next_in, (long)available_in));
 }
 
+static size_t
+brotli_output_buffer_limit(VALUE opts)
+{
+    VALUE limit_value = brotli_hash_lookup(opts, id_output_buffer_limit);
+
+    if (NIL_P(limit_value)) {
+        return 0;
+    }
+
+    if (rb_cmpint(rb_funcall(limit_value, id_cmp, 1, INT2FIX(0)), limit_value, INT2FIX(0)) <= 0) {
+        rb_raise(rb_eArgError, "output_buffer_limit must be positive");
+    }
+
+    return NUM2SIZET(limit_value);
+}
+
 static VALUE
 rb_decompressor_process(int argc, VALUE* argv, VALUE self)
 {
@@ -908,40 +998,25 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
     VALUE input = Qnil;
     VALUE opts = Qnil;
     VALUE input_source = Qnil;
-    VALUE limit_value = Qnil;
     VALUE output;
     size_t available_in;
     const uint8_t* next_in;
-    size_t output_buffer_limit = 0;
-    BROTLI_BOOL limit_output = BROTLI_FALSE;
+    size_t output_buffer_limit;
+    BROTLI_BOOL limit_output;
     BrotliDecoderResult result = BROTLI_DECODER_RESULT_ERROR;
     uint8_t outbuf[BUFSIZ];
 
     rb_scan_args(argc, argv, "11", &input, &opts);
     TypedData_Get_Struct(self, brotli_decompressor_t, &brotli_decompressor_data_type, br);
-    if (!br->state) {
-        rb_raise(rb_eBrotli, "Decompressor is closed");
-    }
-
-    if (!NIL_P(opts)) {
-        Check_Type(opts, T_HASH);
-        limit_value = rb_hash_aref(opts, CSTR2SYM("output_buffer_limit"));
-        if (!NIL_P(limit_value)) {
-            if (rb_cmpint(rb_funcall(limit_value, rb_intern("<=>"), 1, INT2FIX(0)),
-                          limit_value,
-                          INT2FIX(0)) <= 0) {
-                rb_raise(rb_eArgError, "output_buffer_limit must be positive");
-            }
-            output_buffer_limit = NUM2SIZET(limit_value);
-            limit_output = BROTLI_TRUE;
-        }
-    }
+    brotli_decompressor_ensure_open(br);
+    output_buffer_limit = brotli_output_buffer_limit(opts);
+    limit_output = output_buffer_limit > 0 ? BROTLI_TRUE : BROTLI_FALSE;
 
     if (br->finished) {
         StringValue(input);
         available_in = (size_t)RSTRING_LEN(input);
         if (available_in == 0) {
-            return rb_str_new("", 0);
+            return rb_str_buf_new(0);
         }
         rb_raise(rb_eBrotli, "Decompressor is finished");
     }
@@ -970,7 +1045,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         brotli_decompressor_clear_pending_input(self, br);
     }
     br->needs_more_output = BROTLI_FALSE;
-    output = rb_str_new("", 0);
+    output = rb_str_buf_new(BUFSIZ);
 
     for (;;) {
         size_t chunk_size = BUFSIZ;
@@ -1042,9 +1117,7 @@ rb_decompressor_is_finished(VALUE self)
     brotli_decompressor_t *br;
 
     TypedData_Get_Struct(self, brotli_decompressor_t, &brotli_decompressor_data_type, br);
-    if (!br->state) {
-        rb_raise(rb_eBrotli, "Decompressor is closed");
-    }
+    brotli_decompressor_ensure_open(br);
 
     if (br->finished || BrotliDecoderIsFinished(br->state)) {
         br->finished = BROTLI_TRUE;
@@ -1058,9 +1131,7 @@ rb_decompressor_can_accept_more_data(VALUE self)
 {
     brotli_decompressor_t *br;
     TypedData_Get_Struct(self, brotli_decompressor_t, &brotli_decompressor_data_type, br);
-    if (!br->state) {
-        rb_raise(rb_eBrotli, "Decompressor is closed");
-    }
+    brotli_decompressor_ensure_open(br);
     return (br->finished || brotli_decompressor_needs_output_drain(br)) ? Qfalse : Qtrue;
 }
 
@@ -1070,12 +1141,10 @@ rb_decompressor_unused_data(VALUE self)
     brotli_decompressor_t *br;
     size_t available_in;
     TypedData_Get_Struct(self, brotli_decompressor_t, &brotli_decompressor_data_type, br);
-    if (!br->state) {
-        rb_raise(rb_eBrotli, "Decompressor is closed");
-    }
+    brotli_decompressor_ensure_open(br);
     available_in = brotli_decompressor_pending_input_length(br);
     if (!br->finished || available_in == 0) {
-        return rb_str_new("", 0);
+        return rb_str_buf_new(0);
     }
     return rb_str_dup(br->pending_input);
 }
@@ -1094,11 +1163,20 @@ Init_brotli(void)
     VALUE rb_mBrotli;
     rb_mBrotli = rb_define_module("Brotli");
     rb_eBrotli = rb_define_class_under(rb_mBrotli, "Error", rb_eStandardError);
-    rb_global_variable(&rb_eBrotli);
     rb_define_singleton_method(rb_mBrotli, "deflate", brotli_deflate, -1);
     rb_define_singleton_method(rb_mBrotli, "inflate", brotli_inflate, -1);
     rb_define_singleton_method(rb_mBrotli, "version", brotli_version, 0);
+    id_cmp = rb_intern("<=>");
+    id_dictionary = rb_intern("dictionary");
+    id_font = rb_intern("font");
+    id_generic = rb_intern("generic");
+    id_lgblock = rb_intern("lgblock");
+    id_lgwin = rb_intern("lgwin");
+    id_mode = rb_intern("mode");
+    id_output_buffer_limit = rb_intern("output_buffer_limit");
+    id_quality = rb_intern("quality");
     id_read = rb_intern("read");
+    id_text = rb_intern("text");
 
     rb_cBrotliCompressor = rb_define_class_under(rb_mBrotli, "Compressor", rb_cObject);
     rb_define_alloc_func(rb_cBrotliCompressor, rb_compressor_alloc);
@@ -1106,6 +1184,7 @@ Init_brotli(void)
     rb_define_method(rb_cBrotliCompressor, "process", rb_compressor_process, 1);
     rb_define_method(rb_cBrotliCompressor, "flush", rb_compressor_flush, 0);
     rb_define_method(rb_cBrotliCompressor, "finish", rb_compressor_finish, 0);
+    rb_define_method(rb_cBrotliCompressor, "finished?", rb_compressor_is_finished, 0);
 
     rb_cBrotliDecompressor = rb_define_class_under(rb_mBrotli, "Decompressor", rb_cObject);
     rb_define_alloc_func(rb_cBrotliDecompressor, rb_decompressor_alloc);
@@ -1114,5 +1193,6 @@ Init_brotli(void)
     rb_define_method(rb_cBrotliDecompressor, "is_finished", rb_decompressor_is_finished, 0);
     rb_define_method(rb_cBrotliDecompressor, "finished?", rb_decompressor_is_finished, 0);
     rb_define_method(rb_cBrotliDecompressor, "can_accept_more_data", rb_decompressor_can_accept_more_data, 0);
+    rb_define_method(rb_cBrotliDecompressor, "can_accept_more_data?", rb_decompressor_can_accept_more_data, 0);
     rb_define_method(rb_cBrotliDecompressor, "unused_data", rb_decompressor_unused_data, 0);
 }

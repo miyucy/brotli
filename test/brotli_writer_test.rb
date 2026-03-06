@@ -47,8 +47,10 @@ class BrotliWriterTest < Test::Unit::TestCase
 
   test "works" do
     writer = Brotli::Writer.new @tempfile
+    assert_equal false, writer.closed?
     assert_equal testdata.bytesize, writer.write(testdata)
     assert_equal @tempfile, writer.close
+    assert_equal true, writer.closed?
     assert_equal true, @tempfile.closed?
 
     @tempfile.open
@@ -86,6 +88,7 @@ class BrotliWriterTest < Test::Unit::TestCase
     end
 
     assert_equal "finish failed", error.message
+    assert_equal true, writer.closed?
     assert_equal true, @tempfile.closed?
 
     closed_error = assert_raise(Brotli::Error) do
@@ -110,6 +113,7 @@ class BrotliWriterTest < Test::Unit::TestCase
     end
 
     assert_equal "close failed", error.message
+    assert_equal true, writer.closed?
     assert_equal true, io.closed?
     assert_equal 1, io.close_calls
     assert_equal io, writer.close
