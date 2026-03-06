@@ -355,6 +355,10 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     }
 #endif
 
+    if (args.finished != BROTLI_TRUE) {
+        rb_raise(rb_eBrotli, "Failed to compress");
+    }
+
     return value;
 }
 
