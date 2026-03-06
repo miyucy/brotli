@@ -346,6 +346,7 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
 #else
     brotli_deflate_no_gvl((void *)&args);
 #endif
+    RB_GC_GUARD(str);
     if (args.finished == BROTLI_TRUE) {
         value = rb_str_new(args.buffer->ptr, args.buffer->used);
     }
@@ -1190,6 +1191,32 @@ rb_reader_eof_p(VALUE self)
 }
 
 static VALUE
+rb_reader_close_body(VALUE self)
+{
+    brotli_reader_t *br;
+    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
+
+    if (rb_respond_to(br->io, id_close)) {
+        rb_funcall(br->io, id_close, 0);
+    }
+
+    return br->io;
+}
+
+static VALUE
+rb_reader_close_ensure(VALUE self)
+{
+    brotli_reader_t *br;
+    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
+
+    br->closed = BROTLI_TRUE;
+    br->finished = BROTLI_TRUE;
+    br->decompressor = Qnil;
+    rb_str_resize(br->output_buffer, 0);
+    return Qnil;
+}
+
+static VALUE
 rb_reader_close(VALUE self)
 {
     brotli_reader_t *br;
@@ -1199,15 +1226,7 @@ rb_reader_close(VALUE self)
         return br->io;
     }
 
-    if (rb_respond_to(br->io, id_close)) {
-        rb_funcall(br->io, id_close, 0);
-    }
-
-    br->closed = BROTLI_TRUE;
-    br->finished = BROTLI_TRUE;
-    br->decompressor = Qnil;
-    rb_str_resize(br->output_buffer, 0);
-    return br->io;
+    return rb_ensure(rb_reader_close_body, self, rb_reader_close_ensure, self);
 }
 
 static VALUE
@@ -1294,6 +1313,7 @@ static VALUE
 rb_compressor_process(VALUE self, VALUE input)
 {
     brotli_compressor_t *br;
+    VALUE output;
     TypedData_Get_Struct(self, brotli_compressor_t, &brotli_compressor_data_type, br);
     brotli_compressor_ensure_open(br);
     if (br->encoder.finished) {
@@ -1301,10 +1321,12 @@ rb_compressor_process(VALUE self, VALUE input)
     }
 
     StringValue(input);
-    return brotli_encoder_stream_to_string(&br->encoder,
-                                           BROTLI_OPERATION_PROCESS,
-                                           (const uint8_t*)RSTRING_PTR(input),
-                                           (size_t)RSTRING_LEN(input));
+    output = brotli_encoder_stream_to_string(&br->encoder,
+                                             BROTLI_OPERATION_PROCESS,
+                                             (const uint8_t*)RSTRING_PTR(input),
+                                             (size_t)RSTRING_LEN(input));
+    RB_GC_GUARD(input);
+    return output;
 }
 
 static VALUE

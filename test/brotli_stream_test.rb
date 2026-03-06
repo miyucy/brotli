@@ -46,6 +46,36 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal true, decompressor.can_accept_more_data
   end
 
+  test "compressor process keeps input alive during concurrent compaction" do
+    omit "GC.compact is not available" unless GC.respond_to?(:compact)
+
+    chunks = Array.new(250) { "0123456789abcdef".dup }
+    expected = chunks.join
+    compressor = Brotli::Compressor.new
+    compressed = +""
+    stop = false
+
+    gc_thread = Thread.new do
+      until stop
+        GC.start(full_mark: true, immediate_sweep: true)
+        GC.compact
+        Thread.pass
+      end
+    end
+
+    begin
+      chunks.each do |chunk|
+        compressed << compressor.process(chunk)
+      end
+      compressed << compressor.finish
+    ensure
+      stop = true
+      gc_thread.join
+    end
+
+    assert_equal expected, Brotli.inflate(compressed)
+  end
+
   test "compressor rejects process and flush after finish" do
     compressor = Brotli::Compressor.new
     compressor.process("abc")

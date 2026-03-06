@@ -28,6 +28,33 @@ class BrotliReaderTest < Test::Unit::TestCase
     end
   end
 
+  class CloseErrorIO
+    attr_reader :close_calls
+
+    def initialize(data)
+      @io = StringIO.new(data)
+      @close_calls = 0
+    end
+
+    def read(length = nil)
+      @io.read(length)
+    end
+
+    def readpartial(length)
+      @io.readpartial(length)
+    end
+
+    def close
+      @close_calls += 1
+      @io.close
+      raise IOError, "close failed"
+    end
+
+    def closed?
+      @io.closed?
+    end
+  end
+
   def testdata
     @testdata ||= File.binread(
       File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata", "alice29.txt"), __dir__)
@@ -159,6 +186,26 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_raise Brotli::Error do
       reader.read
     end
+  end
+
+  test "close marks reader closed even when io.close raises" do
+    io = CloseErrorIO.new(Brotli.deflate("hello"))
+    reader = Brotli::Reader.new(io)
+
+    error = assert_raise(IOError) do
+      reader.close
+    end
+
+    assert_equal "close failed", error.message
+    assert_equal true, reader.closed?
+    assert_equal true, io.closed?
+    assert_equal 1, io.close_calls
+    assert_equal io, reader.close
+
+    closed_error = assert_raise(Brotli::Error) do
+      reader.read
+    end
+    assert_equal "Reader is closed", closed_error.message
   end
 
   test "raise when initialized with nil io" do
