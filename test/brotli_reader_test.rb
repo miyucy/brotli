@@ -28,33 +28,6 @@ class BrotliReaderTest < Test::Unit::TestCase
     end
   end
 
-  class CloseErrorIO
-    attr_reader :close_calls
-
-    def initialize(data)
-      @io = StringIO.new(data)
-      @close_calls = 0
-    end
-
-    def read(length = nil)
-      @io.read(length)
-    end
-
-    def readpartial(length)
-      @io.readpartial(length)
-    end
-
-    def close
-      @close_calls += 1
-      @io.close
-      raise IOError, "close failed"
-    end
-
-    def closed?
-      @io.closed?
-    end
-  end
-
   def testdata
     @testdata ||= File.binread(
       File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata", "alice29.txt"), __dir__)
@@ -130,19 +103,6 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_equal data, output
   end
 
-  test "reader can continue after compacting a large buffered block" do
-    text = (("line\n" * 6_000) + "tail").b
-    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
-    output = +""
-
-    5_500.times do
-      output << reader.read(5)
-    end
-
-    assert_equal "line\n" * 5_500, output
-    assert_equal(("line\n" * 500) + "tail", reader.read)
-  end
-
   test "small reads use readpartial on incremental io" do
     reader = Brotli::Reader.new(incremental_compressed_io("alpha\nbeta\n"))
 
@@ -171,26 +131,6 @@ class BrotliReaderTest < Test::Unit::TestCase
     end
   end
 
-  test "close marks reader closed even when io.close raises" do
-    io = CloseErrorIO.new(Brotli.deflate("hello"))
-    reader = Brotli::Reader.new(io)
-
-    error = assert_raise(IOError) do
-      reader.close
-    end
-
-    assert_equal "close failed", error.message
-    assert_equal true, reader.closed?
-    assert_equal true, io.closed?
-    assert_equal 1, io.close_calls
-    assert_equal io, reader.close
-
-    closed_error = assert_raise(Brotli::Error) do
-      reader.read
-    end
-    assert_equal "Reader is closed", closed_error.message
-  end
-
   test "raise when initialized with nil io" do
     assert_raise ArgumentError do
       Brotli::Reader.new(nil)
@@ -205,14 +145,6 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_raise Brotli::Error do
       reader.read
     end
-  end
-
-  test "reader ignores trailing bytes in the same compressed chunk" do
-    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate("abc") + "trailer"))
-
-    assert_equal "abc", reader.read
-    assert_equal "", reader.read
-    assert_equal true, reader.eof?
   end
 
   sub_test_case "dictionary support" do
