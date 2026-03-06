@@ -4,6 +4,33 @@ require "test_helper"
 require "tempfile"
 
 class BrotliWriterTest < Test::Unit::TestCase
+  class CloseErrorIO
+    attr_reader :close_calls
+
+    def initialize
+      @io = StringIO.new
+      @close_calls = 0
+    end
+
+    def write(data)
+      @io.write(data)
+    end
+
+    def flush
+      @io.flush
+    end
+
+    def close
+      @close_calls += 1
+      @io.close
+      raise IOError, "close failed"
+    end
+
+    def closed?
+      @io.closed?
+    end
+  end
+
   def setup
     @tempfile = Tempfile.new
   end
@@ -70,6 +97,27 @@ class BrotliWriterTest < Test::Unit::TestCase
       remove_method :finish
       define_method(:finish, original_finish)
     end
+  end
+
+  test "close marks writer closed when io.close raises" do
+    io = CloseErrorIO.new
+    writer = Brotli::Writer.new(io)
+
+    assert_equal 5, writer.write("hello")
+
+    error = assert_raise(IOError) do
+      writer.close
+    end
+
+    assert_equal "close failed", error.message
+    assert_equal true, io.closed?
+    assert_equal 1, io.close_calls
+    assert_equal io, writer.close
+
+    closed_error = assert_raise(Brotli::Error) do
+      writer.write("abc")
+    end
+    assert_equal "Writer is closed", closed_error.message
   end
 
   test "raise" do

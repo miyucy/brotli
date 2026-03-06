@@ -210,6 +210,22 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal tail, decompressor.unused_data
   end
 
+  test "decompressor keeps pending input stable if the caller mutates the original chunk" do
+    data = ("hello world\n" * 5_000).b
+    compressed = Brotli.deflate(data)
+    decompressor = Brotli::Decompressor.new
+    decompressed = +""
+
+    decompressed << decompressor.process(compressed, output_buffer_limit: 256)
+    compressed.replace("x" * compressed.bytesize)
+
+    until decompressor.finished?
+      decompressed << decompressor.process("", output_buffer_limit: 256)
+    end
+
+    assert_equal data, decompressed
+  end
+
   test "decompressor process releases the gvl" do
     data = ("hello world\n" * 100_000).b
     compressed = Brotli.deflate(data)

@@ -145,6 +145,19 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_equal ["alpha\n", "beta\n", "gamma\n"], reader2.each_line.to_a
   end
 
+  test "each_line handles many lines buffered from one compressed chunk" do
+    text = ("line\n" * 5_000).b
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
+    count = 0
+
+    reader.each_line do |line|
+      assert_equal "line\n", line
+      count += 1
+    end
+
+    assert_equal 5_000, count
+  end
+
   test "small reads use readpartial on incremental io" do
     reader = Brotli::Reader.new(incremental_compressed_io("alpha\nbeta\n"))
 

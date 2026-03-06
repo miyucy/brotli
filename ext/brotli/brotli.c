@@ -726,22 +726,33 @@ rb_writer_flush(VALUE self)
 }
 
 static VALUE
-rb_writer_close_ensure(VALUE self)
+rb_writer_close_body(VALUE self)
 {
     brotli_writer_t* br;
     TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
-
-    if (br->closed) {
-        return Qnil;
-    }
 
     if (rb_respond_to(br->io, id_close)) {
         rb_funcall(br->io, id_close, 0);
     }
 
+    return Qnil;
+}
+
+static VALUE
+rb_writer_close_cleanup(VALUE self)
+{
+    brotli_writer_t* br;
+    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
+
     br->closed = BROTLI_TRUE;
     br->compressor = Qnil;
     return Qnil;
+}
+
+static VALUE
+rb_writer_close_ensure(VALUE self)
+{
+    return rb_ensure(rb_writer_close_body, self, rb_writer_close_cleanup, self);
 }
 
 static VALUE
@@ -846,11 +857,7 @@ brotli_reader_take_output(brotli_reader_t* br, size_t len)
         return output;
     }
 
-    rb_str_modify(br->output_buffer);
-    memmove(RSTRING_PTR(br->output_buffer),
-            RSTRING_PTR(br->output_buffer) + len,
-            available - len);
-    rb_str_set_len(br->output_buffer, (long)(available - len));
+    br->output_buffer = rb_str_subseq(br->output_buffer, (long)len, (long)(available - len));
 
     return output;
 }
@@ -1473,15 +1480,19 @@ brotli_decompressor_needs_output_drain(const brotli_decompressor_t *br)
 
 static void
 brotli_decompressor_store_pending_input(brotli_decompressor_t* br,
+                                        VALUE input_source,
                                         const uint8_t* next_in,
                                         size_t available_in)
 {
+    ptrdiff_t offset;
+
     if (available_in == 0) {
         br->pending_input = Qnil;
         return;
     }
 
-    br->pending_input = rb_str_new((const char*)next_in, (long)available_in);
+    offset = next_in - (const uint8_t*)RSTRING_PTR(input_source);
+    br->pending_input = rb_str_subseq(input_source, (long)offset, (long)available_in);
 }
 
 static VALUE
@@ -1558,7 +1569,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         if (limit_output) {
             size_t used = (size_t)RSTRING_LEN(output);
             if (used >= output_buffer_limit) {
-                brotli_decompressor_store_pending_input(br, next_in, available_in);
+                brotli_decompressor_store_pending_input(br, input_source, next_in, available_in);
                 br->needs_more_output = BROTLI_TRUE;
                 break;
             }
@@ -1585,7 +1596,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
 
         if (result == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
             if (limit_output && (size_t)RSTRING_LEN(output) >= output_buffer_limit) {
-                brotli_decompressor_store_pending_input(br, next_in, available_in);
+                brotli_decompressor_store_pending_input(br, input_source, next_in, available_in);
                 br->needs_more_output = BROTLI_TRUE;
                 break;
             }
@@ -1601,7 +1612,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         }
         if (result == BROTLI_DECODER_RESULT_SUCCESS) {
             br->finished = BROTLI_TRUE;
-            brotli_decompressor_store_pending_input(br, next_in, available_in);
+            brotli_decompressor_store_pending_input(br, input_source, next_in, available_in);
             br->needs_more_output = BROTLI_FALSE;
             break;
         }
