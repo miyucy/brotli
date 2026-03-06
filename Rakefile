@@ -20,9 +20,9 @@ Rake::ExtensionTask.new("brotli") do |ext|
   ext.lib_dir = "lib/brotli"
 end
 
-task :build => :compile
-task :test => :compile
-task :default => :test
+task build: :compile
+task test: :compile
+task default: :test
 
 task :docker do
   gcc_versions = ["14", "15"]

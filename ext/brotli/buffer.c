@@ -1,90 +1,68 @@
 #include "buffer.h"
 #include "ruby/ruby.h"
-#define INITIAL (1024)
+
+#include <stdint.h>
+#include <string.h>
+
+#define BUFFER_INITIAL_SIZE 1024
 
 buffer_t*
-create_buffer(const size_t initial) {
-    buffer_t *buffer = ruby_xmalloc(sizeof(buffer_t));
-    if (buffer == NULL) {
-        return NULL;
-    }
-
+create_buffer(size_t initial)
+{
+    buffer_t *buffer = ruby_xmalloc(sizeof(*buffer));
     buffer->used = 0;
-    buffer->expand_count = 0;
-    buffer->expand_ratio = 130;
-    buffer->size = (size_t) (initial > 0 ? initial : INITIAL);
+    buffer->size = initial > 0 ? initial : BUFFER_INITIAL_SIZE;
     buffer->ptr = ruby_xmalloc(buffer->size);
-    if (buffer->ptr == NULL) {
-        delete_buffer(buffer);
-        return NULL;
-    }
-
     return buffer;
 }
 
 void
-delete_buffer(buffer_t* buffer) {
-    if (buffer->ptr != NULL) {
-        ruby_xfree(buffer->ptr);
-        buffer->ptr = NULL;
+delete_buffer(buffer_t* buffer)
+{
+    if (!buffer) {
+        return;
     }
+
+    ruby_xfree(buffer->ptr);
     ruby_xfree(buffer);
 }
 
-static
-buffer_t*
-expand_buffer(buffer_t* const buffer, const size_t need) {
-    size_t size = need * buffer->expand_ratio / 100;
-    buffer->ptr = ruby_xrealloc(buffer->ptr, size);
-    buffer->size = size;
-    buffer->expand_count += 1;
-    return buffer;
-}
+static size_t
+buffer_size_for(size_t current, size_t required)
+{
+    size_t size = current > 0 ? current : BUFFER_INITIAL_SIZE;
 
-buffer_t*
-append_buffer(buffer_t* buffer, const void* ptr, const size_t size) {
-    if (buffer->used + size > buffer->size) {
-        if (expand_buffer(buffer, buffer->used + size) == NULL) {
-            return NULL;
+    while (size < required) {
+        if (size > SIZE_MAX / 2) {
+            return required;
         }
+        size *= 2;
     }
-    memcpy(buffer->ptr + buffer->used, ptr, size);
-    buffer->used += size;
-    return buffer;
+
+    return size;
 }
 
-#if 0
-#include <stdio.h>
+static void
+expand_buffer(buffer_t* buffer, size_t required)
+{
+    buffer->size = buffer_size_for(buffer->size, required);
+    buffer->ptr = ruby_xrealloc(buffer->ptr, buffer->size);
+}
 
 void
-inspect_buffer(buffer_t* buffer) {
-    printf("ptr=%p size=%d used=%d expc=%d\n",
-           buffer->ptr,
-           buffer->size,
-           buffer->used,
-           buffer->expand_count);
-}
-
-int
-main(int argc, char *argv[])
+append_buffer(buffer_t* buffer, const void* ptr, size_t size)
 {
-    buffer_t* b = create_buffer(8);
+    size_t required;
 
-    inspect_buffer(b);
-    append_buffer(b, "1111", 4);
-    inspect_buffer(b);
-    append_buffer(b, "2222", 4);
-    inspect_buffer(b);
-    append_buffer(b, "3333", 4);
-    inspect_buffer(b);
-    append_buffer(b, "4444", 4);
-    inspect_buffer(b);
-    append_buffer(b, "5555", 4);
-    inspect_buffer(b);
-    append_buffer(b, "66", 2);
-    inspect_buffer(b);
+    if (size == 0) {
+        return;
+    }
 
-    delete_buffer(b);
-    return 0;
+    required = buffer->used + size;
+    if (required > buffer->size) {
+        expand_buffer(buffer, required);
+    }
+
+    memcpy(buffer->ptr + buffer->used, ptr, size);
+    buffer->used += size;
 }
-#endif

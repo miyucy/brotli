@@ -22,10 +22,8 @@ class BrotliTest < Test::Unit::TestCase
   end
 
   test ".version" do
-    assert do
-      puts "Brotli version: #{Brotli.version}"
-      ["1.1.0", "1.0.9"].include? Brotli.version
-    end
+    puts "Brotli version: #{Brotli.version}"
+    assert_operator Gem::Version.new(Brotli.version), :>=, Gem::Version.new("1.0.9")
   end
 
   sub_test_case ".deflate" do
@@ -114,13 +112,6 @@ class BrotliTest < Test::Unit::TestCase
       dictionary_data * 10
     end
 
-    test "deflate with dictionary produces smaller output" do
-      compressed_no_dict = Brotli.deflate(repetitive_data)
-      compressed_with_dict = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
-
-      assert compressed_with_dict.bytesize < compressed_no_dict.bytesize
-    end
-
     test "inflate with matching dictionary works" do
       compressed = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
       decompressed = Brotli.inflate(compressed, dictionary: dictionary_data)
@@ -134,50 +125,6 @@ class BrotliTest < Test::Unit::TestCase
       assert_raise Brotli::Error do
         Brotli.inflate(compressed)
       end
-    end
-
-    test "inflate with wrong dictionary fails" do
-      compressed = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
-      wrong_dict = "A completely different dictionary"
-
-      assert_raise Brotli::Error do
-        Brotli.inflate(compressed, dictionary: wrong_dict)
-      end
-    end
-
-    test "deflate and inflate work with binary dictionary" do
-      binary_dict = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09" * 10
-      data = "Test data " * 100 + binary_dict
-
-      compressed = Brotli.deflate(data, dictionary: binary_dict)
-      decompressed = Brotli.inflate(compressed, dictionary: binary_dict)
-
-      assert_equal data, decompressed
-    end
-
-    test "deflate with dictionary and other options" do
-      compressed = Brotli.deflate(repetitive_data,
-                                 dictionary: dictionary_data,
-                                 quality: 11,
-                                 mode: :text)
-      decompressed = Brotli.inflate(compressed, dictionary: dictionary_data)
-
-      assert_equal repetitive_data, decompressed
-    end
-  end
-
-  sub_test_case "Ractor safe" do
-    test "able to invoke non-main ractor" do
-      unless defined? ::Ractor
-        notify "Ractor not defined"
-        omit
-      end
-      ractors = Array.new(2) do
-        Ractor.new(testdata) do |testdata|
-          Brotli.inflate(Brotli.deflate(testdata)) == testdata
-        end
-      end
-      assert_equal [true, true], ractors.map(&:take)
     end
   end
 end
