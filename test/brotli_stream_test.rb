@@ -113,18 +113,21 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal expected, decompressed
   end
 
-  test "decompressor rejects zero output_buffer_limit without wedging the stream" do
+  test "decompressor rejects non-positive output_buffer_limit without wedging the stream" do
     compressed = Brotli.deflate("hello world")
-    decompressor = Brotli::Decompressor.new
 
-    error = assert_raise ArgumentError do
-      decompressor.process(compressed, output_buffer_limit: 0)
+    [0, -1].each do |limit|
+      decompressor = Brotli::Decompressor.new
+
+      error = assert_raise ArgumentError do
+        decompressor.process(compressed, output_buffer_limit: limit)
+      end
+
+      assert_equal "output_buffer_limit must be positive", error.message
+      assert_equal true, decompressor.can_accept_more_data
+      assert_equal "hello world", decompressor.process(compressed)
+      assert_equal true, decompressor.finished?
     end
-
-    assert_equal "output_buffer_limit must be positive", error.message
-    assert_equal true, decompressor.can_accept_more_data
-    assert_equal "hello world", decompressor.process(compressed)
-    assert_equal true, decompressor.finished?
   end
 
   test "decompressor requires draining when one input chunk exceeds output_buffer_limit" do

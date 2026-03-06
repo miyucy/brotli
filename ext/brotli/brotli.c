@@ -1460,10 +1460,12 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         Check_Type(opts, T_HASH);
         limit_value = rb_hash_aref(opts, CSTR2SYM("output_buffer_limit"));
         if (!NIL_P(limit_value)) {
-            output_buffer_limit = NUM2SIZET(limit_value);
-            if (output_buffer_limit == 0) {
+            if (rb_cmpint(rb_funcall(limit_value, rb_intern("<=>"), 1, INT2FIX(0)),
+                          limit_value,
+                          INT2FIX(0)) <= 0) {
                 rb_raise(rb_eArgError, "output_buffer_limit must be positive");
             }
+            output_buffer_limit = NUM2SIZET(limit_value);
             limit_output = BROTLI_TRUE;
         }
     }
