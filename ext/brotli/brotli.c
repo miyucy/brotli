@@ -383,7 +383,6 @@ static VALUE brotli_version(VALUE klass) {
  * Streaming APIs
  ******************************************************************************/
 
-static ID id_write, id_flush, id_close, id_process, id_finish, id_is_finished, id_can_accept_more_data, id_readpartial;
 static VALUE rb_cBrotliCompressor;
 static VALUE rb_cBrotliDecompressor;
 
@@ -414,20 +413,6 @@ typedef struct {
     size_t dict_len;
     BROTLI_BOOL finished;
 } brotli_encoder_t;
-
-typedef struct {
-    VALUE io;
-    VALUE compressor;
-    BROTLI_BOOL closed;
-} brotli_writer_t;
-
-typedef struct {
-    VALUE io;
-    VALUE decompressor;
-    VALUE output_buffer;
-    BROTLI_BOOL closed;
-    BROTLI_BOOL finished;
-} brotli_reader_t;
 
 typedef struct {
     brotli_encoder_t encoder;
@@ -621,655 +606,6 @@ brotli_encoder_stream_to_string(brotli_encoder_t* encoder,
     return output;
 }
 
-static void
-brotli_writer_mark(void *p)
-{
-    brotli_writer_t *br = p;
-    rb_gc_mark(br->io);
-    rb_gc_mark(br->compressor);
-}
-
-static void
-brotli_writer_free(void *p)
-{
-    brotli_writer_t* br = p;
-    br->io = Qnil;
-    br->compressor = Qnil;
-    br->closed = BROTLI_TRUE;
-    ruby_xfree(br);
-}
-
-static size_t
-brotli_writer_memsize(const void *p)
-{
-    return sizeof(brotli_writer_t);
-}
-
-static const rb_data_type_t brotli_writer_data_type = {
-    "brotli_writer",
-    { brotli_writer_mark, brotli_writer_free, brotli_writer_memsize },
-    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
-};
-
-static VALUE
-rb_writer_alloc(VALUE klass)
-{
-    brotli_writer_t *br;
-    VALUE obj = TypedData_Make_Struct(klass, brotli_writer_t, &brotli_writer_data_type, br);
-    br->io = Qnil;
-    br->compressor = Qnil;
-    br->closed = BROTLI_FALSE;
-    return obj;
-}
-
-static void
-brotli_writer_ensure_open(brotli_writer_t* br)
-{
-    if (br->closed) {
-        rb_raise(rb_eBrotli, "Writer is closed");
-    }
-}
-
-static VALUE
-rb_writer_initialize(int argc, VALUE* argv, VALUE self)
-{
-    VALUE io = Qnil;
-    VALUE opts = Qnil;
-    VALUE compressor = Qnil;
-
-    rb_scan_args(argc, argv, "11", &io, &opts);
-    if (NIL_P(io)) {
-        rb_raise(rb_eArgError, "io should not be nil");
-        return Qnil;
-    }
-
-    brotli_writer_t *br;
-    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
-    if (NIL_P(opts)) {
-        compressor = rb_class_new_instance(0, NULL, rb_cBrotliCompressor);
-    } else {
-        VALUE args[1] = { opts };
-        compressor = rb_class_new_instance(1, args, rb_cBrotliCompressor);
-    }
-
-    br->io = io;
-    br->compressor = compressor;
-    br->closed = BROTLI_FALSE;
-
-    return self;
-}
-
-static VALUE
-rb_writer_write(VALUE self, VALUE buf)
-{
-    brotli_writer_t* br;
-    VALUE output;
-    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
-    brotli_writer_ensure_open(br);
-
-    StringValue(buf);
-    output = rb_funcall(br->compressor, id_process, 1, buf);
-    if (RSTRING_LEN(output) > 0) {
-        rb_funcall(br->io, id_write, 1, output);
-    }
-
-    return SIZET2NUM((size_t)RSTRING_LEN(buf));
-}
-
-static VALUE
-rb_writer_finish(VALUE self)
-{
-    brotli_writer_t* br;
-    VALUE output;
-    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
-    brotli_writer_ensure_open(br);
-
-    output = rb_funcall(br->compressor, id_finish, 0);
-    if (RSTRING_LEN(output) > 0) {
-        rb_funcall(br->io, id_write, 1, output);
-    }
-
-    return br->io;
-}
-
-static VALUE
-rb_writer_flush(VALUE self)
-{
-    brotli_writer_t *br;
-    VALUE output;
-    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
-    brotli_writer_ensure_open(br);
-
-    output = rb_funcall(br->compressor, id_flush, 0);
-    if (RSTRING_LEN(output) > 0) {
-        rb_funcall(br->io, id_write, 1, output);
-    }
-
-    if (rb_respond_to(br->io, id_flush)) {
-        rb_funcall(br->io, id_flush, 0);
-    }
-    return self;
-}
-
-static VALUE
-rb_writer_close_body(VALUE self)
-{
-    brotli_writer_t* br;
-    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
-
-    if (rb_respond_to(br->io, id_close)) {
-        rb_funcall(br->io, id_close, 0);
-    }
-
-    return Qnil;
-}
-
-static VALUE
-rb_writer_close_cleanup(VALUE self)
-{
-    brotli_writer_t* br;
-    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
-
-    br->closed = BROTLI_TRUE;
-    br->compressor = Qnil;
-    return Qnil;
-}
-
-static VALUE
-rb_writer_close_ensure(VALUE self)
-{
-    return rb_ensure(rb_writer_close_body, self, rb_writer_close_cleanup, self);
-}
-
-static VALUE
-rb_writer_close(VALUE self)
-{
-    brotli_writer_t* br;
-    TypedData_Get_Struct(self, brotli_writer_t, &brotli_writer_data_type, br);
-
-    if (br->closed) {
-        return br->io;
-    }
-
-    return rb_ensure(rb_writer_finish, self, rb_writer_close_ensure, self);
-}
-
-/*******************************************************************************
- * Reader
- ******************************************************************************/
-
-static void
-brotli_reader_mark(void *p)
-{
-    brotli_reader_t *br = p;
-    rb_gc_mark(br->io);
-    rb_gc_mark(br->decompressor);
-    rb_gc_mark(br->output_buffer);
-}
-
-static void
-brotli_reader_free(void *p)
-{
-    brotli_reader_t* br = p;
-    br->io = Qnil;
-    br->decompressor = Qnil;
-    br->output_buffer = Qnil;
-    br->closed = BROTLI_TRUE;
-    br->finished = BROTLI_TRUE;
-    ruby_xfree(br);
-}
-
-static size_t
-brotli_reader_memsize(const void *p)
-{
-    return sizeof(brotli_reader_t);
-}
-
-static const rb_data_type_t brotli_reader_data_type = {
-    "brotli_reader",
-    { brotli_reader_mark, brotli_reader_free, brotli_reader_memsize },
-    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
-};
-
-static VALUE
-rb_reader_alloc(VALUE klass)
-{
-    brotli_reader_t *br;
-    VALUE obj = TypedData_Make_Struct(klass, brotli_reader_t, &brotli_reader_data_type, br);
-    br->io = Qnil;
-    br->decompressor = Qnil;
-    br->output_buffer = rb_str_new("", 0);
-    br->closed = BROTLI_FALSE;
-    br->finished = BROTLI_FALSE;
-    return obj;
-}
-
-static void
-brotli_reader_ensure_open(brotli_reader_t* br)
-{
-    if (br->closed) {
-        rb_raise(rb_eBrotli, "Reader is closed");
-    }
-}
-
-static VALUE
-brotli_reader_with_outbuf(VALUE outbuf, VALUE str)
-{
-    if (NIL_P(outbuf)) {
-        return str;
-    }
-
-    StringValue(outbuf);
-    rb_str_replace(outbuf, str);
-    return outbuf;
-}
-
-static VALUE
-brotli_reader_take_output(brotli_reader_t* br, size_t len)
-{
-    size_t available = (size_t)RSTRING_LEN(br->output_buffer);
-    VALUE output;
-
-    if (len > available) {
-        len = available;
-    }
-    if (len == 0) {
-        return rb_str_new("", 0);
-    }
-
-    output = rb_str_new(RSTRING_PTR(br->output_buffer), (long)len);
-    if (len == available) {
-        rb_str_resize(br->output_buffer, 0);
-        return output;
-    }
-
-    br->output_buffer = rb_str_subseq(br->output_buffer, (long)len, (long)(available - len));
-
-    return output;
-}
-
-static void
-brotli_reader_update_finished(brotli_reader_t* br)
-{
-    if (RTEST(rb_funcall(br->decompressor, id_is_finished, 0))) {
-        br->finished = BROTLI_TRUE;
-    }
-}
-
-static void
-brotli_reader_feed_chunk(brotli_reader_t* br, VALUE chunk, size_t output_limit)
-{
-    VALUE output;
-    VALUE opts = Qnil;
-
-    StringValue(chunk);
-    if (output_limit > 0) {
-        opts = rb_hash_new();
-        rb_hash_aset(opts, CSTR2SYM("output_buffer_limit"), SIZET2NUM(output_limit));
-        output = rb_funcall(br->decompressor, id_process, 2, chunk, opts);
-    } else {
-        output = rb_funcall(br->decompressor, id_process, 1, chunk);
-    }
-    if (RSTRING_LEN(output) > 0) {
-        rb_str_cat(br->output_buffer, RSTRING_PTR(output), RSTRING_LEN(output));
-    }
-    brotli_reader_update_finished(br);
-}
-
-typedef struct {
-    VALUE io;
-    VALUE size;
-} brotli_reader_read_args_t;
-
-static VALUE
-brotli_reader_call_readpartial(VALUE arg)
-{
-    brotli_reader_read_args_t* args = (brotli_reader_read_args_t*)arg;
-    return rb_funcall(args->io, id_readpartial, 1, args->size);
-}
-
-static VALUE
-brotli_reader_readpartial_eof(VALUE arg, VALUE error)
-{
-    return Qnil;
-}
-
-static VALUE
-brotli_reader_read_next_chunk(brotli_reader_t* br, size_t size)
-{
-    VALUE read_size = SIZET2NUM(size);
-
-    if (rb_respond_to(br->io, id_readpartial)) {
-        brotli_reader_read_args_t args = { br->io, read_size };
-        return rb_rescue2(brotli_reader_call_readpartial,
-                          (VALUE)&args,
-                          brotli_reader_readpartial_eof,
-                          Qnil,
-                          rb_eEOFError,
-                          (VALUE)0);
-    }
-
-    return rb_funcall(br->io, id_read, 1, read_size);
-}
-
-static void
-brotli_reader_fill_buffer(brotli_reader_t* br,
-                          size_t wanted,
-                          size_t output_limit,
-                          BROTLI_BOOL stop_after_output)
-{
-    while ((size_t)RSTRING_LEN(br->output_buffer) < wanted && !br->finished) {
-        VALUE chunk;
-        size_t remaining_limit = 0;
-
-        if (output_limit > 0) {
-            size_t buffered = (size_t)RSTRING_LEN(br->output_buffer);
-            if (output_limit > buffered) {
-                remaining_limit = output_limit - buffered;
-            }
-        }
-
-        if (RTEST(rb_funcall(br->decompressor, id_can_accept_more_data, 0))) {
-            chunk = brotli_reader_read_next_chunk(br, BUFSIZ);
-            if (NIL_P(chunk)) {
-                size_t buffered = (size_t)RSTRING_LEN(br->output_buffer);
-
-                brotli_reader_feed_chunk(br, rb_str_new("", 0), remaining_limit);
-                if (br->finished) {
-                    break;
-                }
-                if ((size_t)RSTRING_LEN(br->output_buffer) > buffered ||
-                    !RTEST(rb_funcall(br->decompressor, id_can_accept_more_data, 0))) {
-                    if (stop_after_output && RSTRING_LEN(br->output_buffer) > 0) {
-                        break;
-                    }
-                    continue;
-                }
-                rb_raise(rb_eBrotli, "Unexpected end of compressed stream");
-            }
-
-            StringValue(chunk);
-            if (RSTRING_LEN(chunk) == 0) {
-                size_t buffered = (size_t)RSTRING_LEN(br->output_buffer);
-
-                brotli_reader_feed_chunk(br, rb_str_new("", 0), remaining_limit);
-                if (br->finished) {
-                    break;
-                }
-                if ((size_t)RSTRING_LEN(br->output_buffer) > buffered ||
-                    !RTEST(rb_funcall(br->decompressor, id_can_accept_more_data, 0))) {
-                    if (stop_after_output && RSTRING_LEN(br->output_buffer) > 0) {
-                        break;
-                    }
-                    continue;
-                }
-                rb_raise(rb_eBrotli, "Unexpected end of compressed stream");
-            }
-        } else {
-            chunk = rb_str_new("", 0);
-        }
-
-        brotli_reader_feed_chunk(br, chunk, remaining_limit);
-        if (stop_after_output && RSTRING_LEN(br->output_buffer) > 0) {
-            break;
-        }
-    }
-}
-
-static VALUE
-rb_reader_initialize(int argc, VALUE* argv, VALUE self)
-{
-    VALUE io = Qnil;
-    VALUE opts = Qnil;
-    VALUE decompressor = Qnil;
-    brotli_reader_t *br;
-
-    rb_scan_args(argc, argv, "11", &io, &opts);
-    if (NIL_P(io)) {
-        rb_raise(rb_eArgError, "io should not be nil");
-        return Qnil;
-    }
-
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-    if (NIL_P(opts)) {
-        decompressor = rb_class_new_instance(0, NULL, rb_cBrotliDecompressor);
-    } else {
-        VALUE args[1] = { opts };
-        decompressor = rb_class_new_instance(1, args, rb_cBrotliDecompressor);
-    }
-
-    br->io = io;
-    br->decompressor = decompressor;
-    rb_str_resize(br->output_buffer, 0);
-    br->closed = BROTLI_FALSE;
-    br->finished = BROTLI_FALSE;
-    return self;
-}
-
-static VALUE
-rb_reader_read(int argc, VALUE* argv, VALUE self)
-{
-    VALUE length = Qnil;
-    VALUE outbuf = Qnil;
-    brotli_reader_t *br;
-    VALUE output;
-    long len;
-
-    rb_scan_args(argc, argv, "02", &length, &outbuf);
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-    brotli_reader_ensure_open(br);
-
-    if (NIL_P(length)) {
-        while (!br->finished) {
-            size_t wanted = (size_t)RSTRING_LEN(br->output_buffer) + 1;
-            brotli_reader_fill_buffer(br, wanted, 0, BROTLI_FALSE);
-        }
-        output = brotli_reader_take_output(br, (size_t)RSTRING_LEN(br->output_buffer));
-        return brotli_reader_with_outbuf(outbuf, output);
-    }
-
-    len = NUM2LONG(length);
-    if (len < 0) {
-        rb_raise(rb_eArgError, "negative length %ld given", len);
-    }
-    if (len == 0) {
-        return brotli_reader_with_outbuf(outbuf, rb_str_new("", 0));
-    }
-
-    brotli_reader_fill_buffer(br, (size_t)len, (size_t)len, BROTLI_FALSE);
-    if (RSTRING_LEN(br->output_buffer) == 0 && br->finished) {
-        if (!NIL_P(outbuf)) {
-            brotli_reader_with_outbuf(outbuf, rb_str_new("", 0));
-        }
-        return Qnil;
-    }
-
-    output = brotli_reader_take_output(br, (size_t)len);
-    return brotli_reader_with_outbuf(outbuf, output);
-}
-
-static VALUE
-rb_reader_readpartial(int argc, VALUE* argv, VALUE self)
-{
-    VALUE maxlen = Qnil;
-    VALUE outbuf = Qnil;
-    brotli_reader_t *br;
-    VALUE output;
-    long len;
-
-    rb_scan_args(argc, argv, "11", &maxlen, &outbuf);
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-    brotli_reader_ensure_open(br);
-
-    len = NUM2LONG(maxlen);
-    if (len <= 0) {
-        rb_raise(rb_eArgError, "max length must be positive");
-    }
-
-    while (RSTRING_LEN(br->output_buffer) == 0) {
-        if (br->finished) {
-            if (!NIL_P(outbuf)) {
-                brotli_reader_with_outbuf(outbuf, rb_str_new("", 0));
-            }
-            rb_raise(rb_eEOFError, "end of file reached");
-        }
-        brotli_reader_fill_buffer(br, 1, (size_t)len, BROTLI_TRUE);
-        if (RSTRING_LEN(br->output_buffer) == 0 && br->finished) {
-            if (!NIL_P(outbuf)) {
-                brotli_reader_with_outbuf(outbuf, rb_str_new("", 0));
-            }
-            rb_raise(rb_eEOFError, "end of file reached");
-        }
-    }
-
-    output = brotli_reader_take_output(br, (size_t)len);
-    return brotli_reader_with_outbuf(outbuf, output);
-}
-
-static VALUE
-rb_reader_gets(int argc, VALUE* argv, VALUE self)
-{
-    VALUE sep = Qnil;
-    VALUE idx = Qnil;
-    brotli_reader_t *br;
-    long sep_len;
-
-    rb_scan_args(argc, argv, "01", &sep);
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-    brotli_reader_ensure_open(br);
-
-    if (argc == 0) {
-        sep = rb_rs;
-    }
-
-    if (NIL_P(sep)) {
-        while (!br->finished) {
-            size_t wanted = (size_t)RSTRING_LEN(br->output_buffer) + 1;
-            brotli_reader_fill_buffer(br, wanted, 0, BROTLI_FALSE);
-        }
-        if (RSTRING_LEN(br->output_buffer) == 0) {
-            return Qnil;
-        }
-        return brotli_reader_take_output(br, (size_t)RSTRING_LEN(br->output_buffer));
-    }
-
-    StringValue(sep);
-    sep_len = RSTRING_LEN(sep);
-    if (sep_len == 0) {
-        rb_raise(rb_eArgError, "empty separator is not supported");
-    }
-
-    while (!br->finished) {
-        idx = rb_funcall(br->output_buffer, rb_intern("index"), 1, sep);
-        if (!NIL_P(idx)) {
-            break;
-        }
-
-        {
-            size_t wanted = (size_t)RSTRING_LEN(br->output_buffer) + 1;
-            brotli_reader_fill_buffer(br, wanted, 0, BROTLI_FALSE);
-        }
-    }
-
-    if (RSTRING_LEN(br->output_buffer) == 0 && br->finished) {
-        return Qnil;
-    }
-
-    idx = rb_funcall(br->output_buffer, rb_intern("index"), 1, sep);
-    if (!NIL_P(idx)) {
-        long end = NUM2LONG(idx) + sep_len;
-        return brotli_reader_take_output(br, (size_t)end);
-    }
-    return brotli_reader_take_output(br, (size_t)RSTRING_LEN(br->output_buffer));
-}
-
-static VALUE
-rb_reader_each_line(int argc, VALUE* argv, VALUE self)
-{
-    VALUE line;
-
-    if (!rb_block_given_p()) {
-        return rb_enumeratorize(self, ID2SYM(rb_intern("each_line")), argc, argv);
-    }
-
-    for (;;) {
-        line = rb_reader_gets(argc, argv, self);
-        if (NIL_P(line)) {
-            break;
-        }
-        rb_yield(line);
-    }
-    return self;
-}
-
-static VALUE
-rb_reader_eof_p(VALUE self)
-{
-    brotli_reader_t *br;
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-    brotli_reader_ensure_open(br);
-
-    if (RSTRING_LEN(br->output_buffer) > 0) {
-        return Qfalse;
-    }
-    if (br->finished) {
-        return Qtrue;
-    }
-
-    brotli_reader_fill_buffer(br, 1, 1, BROTLI_TRUE);
-    if (RSTRING_LEN(br->output_buffer) > 0) {
-        return Qfalse;
-    }
-    return br->finished ? Qtrue : Qfalse;
-}
-
-static VALUE
-rb_reader_close_body(VALUE self)
-{
-    brotli_reader_t *br;
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-
-    if (rb_respond_to(br->io, id_close)) {
-        rb_funcall(br->io, id_close, 0);
-    }
-
-    return br->io;
-}
-
-static VALUE
-rb_reader_close_ensure(VALUE self)
-{
-    brotli_reader_t *br;
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-
-    br->closed = BROTLI_TRUE;
-    br->finished = BROTLI_TRUE;
-    br->decompressor = Qnil;
-    rb_str_resize(br->output_buffer, 0);
-    return Qnil;
-}
-
-static VALUE
-rb_reader_close(VALUE self)
-{
-    brotli_reader_t *br;
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-
-    if (br->closed) {
-        return br->io;
-    }
-
-    return rb_ensure(rb_reader_close_body, self, rb_reader_close_ensure, self);
-}
-
-static VALUE
-rb_reader_closed_p(VALUE self)
-{
-    brotli_reader_t *br;
-    TypedData_Get_Struct(self, brotli_reader_t, &brotli_reader_data_type, br);
-    return br->closed ? Qtrue : Qfalse;
-}
-
 /*******************************************************************************
  * Compressor
  ******************************************************************************/
@@ -1401,7 +737,11 @@ static void
 brotli_decompressor_mark(void *p)
 {
     brotli_decompressor_t *br = p;
+#ifdef HAVE_RB_GC_MARK_MOVABLE
+    rb_gc_mark_movable(br->pending_input);
+#else
     rb_gc_mark(br->pending_input);
+#endif
 }
 
 static void
@@ -1427,10 +767,29 @@ brotli_decompressor_memsize(const void *p)
     return sizeof(brotli_decompressor_t);
 }
 
+#ifdef HAVE_RB_GC_MARK_MOVABLE
+static void
+brotli_decompressor_compact(void *p)
+{
+    brotli_decompressor_t *br = p;
+
+    if (!NIL_P(br->pending_input)) {
+        br->pending_input = rb_gc_location(br->pending_input);
+    }
+}
+#endif
+
 static const rb_data_type_t brotli_decompressor_data_type = {
     "brotli_decompressor",
-    { brotli_decompressor_mark, brotli_decompressor_free, brotli_decompressor_memsize },
-    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
+    {
+        brotli_decompressor_mark,
+        brotli_decompressor_free,
+        brotli_decompressor_memsize,
+#ifdef HAVE_RB_GC_MARK_MOVABLE
+        brotli_decompressor_compact,
+#endif
+    },
+    0, 0, RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_WB_PROTECTED
 };
 
 static VALUE
@@ -1441,7 +800,7 @@ rb_decompressor_alloc(VALUE klass)
     br->state = BrotliDecoderCreateInstance(brotli_alloc, brotli_free, NULL);
     br->dict_data = NULL;
     br->dict_len = 0;
-    br->pending_input = Qnil;
+    RB_OBJ_WRITE(obj, &br->pending_input, Qnil);
     br->needs_more_output = BROTLI_FALSE;
     br->finished = BROTLI_FALSE;
     if (!br->state) {
@@ -1501,6 +860,27 @@ brotli_decompressor_has_pending_input(const brotli_decompressor_t *br)
     return !NIL_P(br->pending_input) && RSTRING_LEN(br->pending_input) > 0;
 }
 
+static size_t
+brotli_decompressor_pending_input_length(const brotli_decompressor_t *br)
+{
+    if (!brotli_decompressor_has_pending_input(br)) {
+        return 0;
+    }
+    return (size_t)RSTRING_LEN(br->pending_input);
+}
+
+static void
+brotli_decompressor_set_pending_input(VALUE self, brotli_decompressor_t* br, VALUE pending_input)
+{
+    RB_OBJ_WRITE(self, &br->pending_input, pending_input);
+}
+
+static void
+brotli_decompressor_clear_pending_input(VALUE self, brotli_decompressor_t* br)
+{
+    brotli_decompressor_set_pending_input(self, br, Qnil);
+}
+
 static BROTLI_BOOL
 brotli_decompressor_needs_output_drain(const brotli_decompressor_t *br)
 {
@@ -1509,20 +889,16 @@ brotli_decompressor_needs_output_drain(const brotli_decompressor_t *br)
 }
 
 static void
-brotli_decompressor_store_pending_input(brotli_decompressor_t* br,
-                                        VALUE input_source,
+brotli_decompressor_store_pending_input(VALUE self,
+                                        brotli_decompressor_t* br,
                                         const uint8_t* next_in,
                                         size_t available_in)
 {
-    ptrdiff_t offset;
-
     if (available_in == 0) {
-        br->pending_input = Qnil;
+        brotli_decompressor_clear_pending_input(self, br);
         return;
     }
-
-    offset = next_in - (const uint8_t*)RSTRING_PTR(input_source);
-    br->pending_input = rb_str_subseq(input_source, (long)offset, (long)available_in);
+    brotli_decompressor_set_pending_input(self, br, rb_str_new((const char*)next_in, (long)available_in));
 }
 
 static VALUE
@@ -1585,9 +961,14 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         input_source = input;
     }
 
-    available_in = (size_t)RSTRING_LEN(input_source);
-    next_in = (const uint8_t*)RSTRING_PTR(input_source);
-    br->pending_input = Qnil;
+    if (input_source == br->pending_input) {
+        available_in = brotli_decompressor_pending_input_length(br);
+        next_in = (const uint8_t*)RSTRING_PTR(input_source);
+    } else {
+        available_in = (size_t)RSTRING_LEN(input_source);
+        next_in = (const uint8_t*)RSTRING_PTR(input_source);
+        brotli_decompressor_clear_pending_input(self, br);
+    }
     br->needs_more_output = BROTLI_FALSE;
     output = rb_str_new("", 0);
 
@@ -1599,7 +980,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
         if (limit_output) {
             size_t used = (size_t)RSTRING_LEN(output);
             if (used >= output_buffer_limit) {
-                brotli_decompressor_store_pending_input(br, input_source, next_in, available_in);
+                brotli_decompressor_store_pending_input(self, br, next_in, available_in);
                 br->needs_more_output = BROTLI_TRUE;
                 break;
             }
@@ -1626,7 +1007,7 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
 
         if (result == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
             if (limit_output && (size_t)RSTRING_LEN(output) >= output_buffer_limit) {
-                brotli_decompressor_store_pending_input(br, input_source, next_in, available_in);
+                brotli_decompressor_store_pending_input(self, br, next_in, available_in);
                 br->needs_more_output = BROTLI_TRUE;
                 break;
             }
@@ -1636,13 +1017,13 @@ rb_decompressor_process(int argc, VALUE* argv, VALUE self)
             if (BrotliDecoderHasMoreOutput(br->state)) {
                 continue;
             }
-            br->pending_input = Qnil;
+            brotli_decompressor_clear_pending_input(self, br);
             br->needs_more_output = BROTLI_FALSE;
             break;
         }
         if (result == BROTLI_DECODER_RESULT_SUCCESS) {
             br->finished = BROTLI_TRUE;
-            brotli_decompressor_store_pending_input(br, input_source, next_in, available_in);
+            brotli_decompressor_store_pending_input(self, br, next_in, available_in);
             br->needs_more_output = BROTLI_FALSE;
             break;
         }
@@ -1687,11 +1068,13 @@ static VALUE
 rb_decompressor_unused_data(VALUE self)
 {
     brotli_decompressor_t *br;
+    size_t available_in;
     TypedData_Get_Struct(self, brotli_decompressor_t, &brotli_decompressor_data_type, br);
     if (!br->state) {
         rb_raise(rb_eBrotli, "Decompressor is closed");
     }
-    if (!br->finished || NIL_P(br->pending_input)) {
+    available_in = brotli_decompressor_pending_input_length(br);
+    if (!br->finished || available_in == 0) {
         return rb_str_new("", 0);
     }
     return rb_str_dup(br->pending_input);
@@ -1709,8 +1092,6 @@ Init_brotli(void)
 #endif
 
     VALUE rb_mBrotli;
-    VALUE rb_Writer;
-    VALUE rb_Reader;
     rb_mBrotli = rb_define_module("Brotli");
     rb_eBrotli = rb_define_class_under(rb_mBrotli, "Error", rb_eStandardError);
     rb_global_variable(&rb_eBrotli);
@@ -1718,14 +1099,6 @@ Init_brotli(void)
     rb_define_singleton_method(rb_mBrotli, "inflate", brotli_inflate, -1);
     rb_define_singleton_method(rb_mBrotli, "version", brotli_version, 0);
     id_read = rb_intern("read");
-    id_readpartial = rb_intern("readpartial");
-    id_write = rb_intern("write");
-    id_flush = rb_intern("flush");
-    id_close = rb_intern("close");
-    id_process = rb_intern("process");
-    id_finish = rb_intern("finish");
-    id_is_finished = rb_intern("is_finished");
-    id_can_accept_more_data = rb_intern("can_accept_more_data");
 
     rb_cBrotliCompressor = rb_define_class_under(rb_mBrotli, "Compressor", rb_cObject);
     rb_define_alloc_func(rb_cBrotliCompressor, rb_compressor_alloc);
@@ -1742,24 +1115,4 @@ Init_brotli(void)
     rb_define_method(rb_cBrotliDecompressor, "finished?", rb_decompressor_is_finished, 0);
     rb_define_method(rb_cBrotliDecompressor, "can_accept_more_data", rb_decompressor_can_accept_more_data, 0);
     rb_define_method(rb_cBrotliDecompressor, "unused_data", rb_decompressor_unused_data, 0);
-
-    rb_Writer = rb_define_class_under(rb_mBrotli, "Writer", rb_cObject);
-    rb_define_alloc_func(rb_Writer, rb_writer_alloc);
-    rb_define_method(rb_Writer, "initialize", rb_writer_initialize, -1);
-    rb_define_method(rb_Writer, "write", rb_writer_write, 1);
-    rb_define_method(rb_Writer, "finish", rb_writer_finish, 0);
-    rb_define_method(rb_Writer, "flush", rb_writer_flush, 0);
-    rb_define_method(rb_Writer, "close", rb_writer_close, 0);
-
-    rb_Reader = rb_define_class_under(rb_mBrotli, "Reader", rb_cObject);
-    rb_define_alloc_func(rb_Reader, rb_reader_alloc);
-    rb_define_method(rb_Reader, "initialize", rb_reader_initialize, -1);
-    rb_define_method(rb_Reader, "read", rb_reader_read, -1);
-    rb_define_method(rb_Reader, "readpartial", rb_reader_readpartial, -1);
-    rb_define_method(rb_Reader, "gets", rb_reader_gets, -1);
-    rb_define_method(rb_Reader, "each_line", rb_reader_each_line, -1);
-    rb_define_method(rb_Reader, "each", rb_reader_each_line, -1);
-    rb_define_method(rb_Reader, "eof?", rb_reader_eof_p, 0);
-    rb_define_method(rb_Reader, "close", rb_reader_close, 0);
-    rb_define_method(rb_Reader, "closed?", rb_reader_closed_p, 0);
 }

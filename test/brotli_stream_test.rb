@@ -226,6 +226,39 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal data, decompressed
   end
 
+  test "decompressor can continue draining after compacting pending input" do
+    compressed = Brotli.deflate(testdata)
+    decompressor = Brotli::Decompressor.new
+    decompressed = +""
+
+    decompressed << decompressor.process(compressed, output_buffer_limit: 128)
+
+    until decompressor.finished?
+      decompressed << decompressor.process("", output_buffer_limit: 128)
+    end
+
+    assert_equal testdata, decompressed
+  end
+
+  test "decompressor pending input survives gc compaction while draining" do
+    omit "GC.compact is not available" unless GC.respond_to?(:compact)
+
+    data = ("hello world\n" * 20_000).b
+    compressed = Brotli.deflate(data)
+    decompressor = Brotli::Decompressor.new
+    decompressed = +""
+
+    decompressed << decompressor.process(compressed, output_buffer_limit: 128)
+
+    until decompressor.finished?
+      GC.start(full_mark: true, immediate_sweep: true)
+      GC.compact
+      decompressed << decompressor.process("", output_buffer_limit: 128)
+    end
+
+    assert_equal data, decompressed
+  end
+
   test "decompressor process releases the gvl" do
     data = ("hello world\n" * 100_000).b
     compressed = Brotli.deflate(data)

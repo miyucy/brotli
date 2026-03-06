@@ -158,6 +158,17 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_equal 5_000, count
   end
 
+  test "reader can continue after compacting a large buffered block" do
+    text = (("line\n" * 6_000) + "tail").b
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate(text)))
+
+    5_500.times do
+      assert_equal "line\n", reader.gets
+    end
+
+    assert_equal(("line\n" * 500) + "tail", reader.read)
+  end
+
   test "small reads use readpartial on incremental io" do
     reader = Brotli::Reader.new(incremental_compressed_io("alpha\nbeta\n"))
 

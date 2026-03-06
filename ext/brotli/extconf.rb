@@ -3,6 +3,7 @@ require "fileutils"
 require "rbconfig"
 
 dir_config("brotli")
+have_func("rb_gc_mark_movable")
 
 # libbrotli-dev
 have_dev_pkg = [
