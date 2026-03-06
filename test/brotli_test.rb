@@ -126,6 +126,14 @@ class BrotliTest < Test::Unit::TestCase
       assert_equal repetitive_data, decompressed
     end
 
+    test "dictionary-backed one-shot compression can be repeated" do
+      20.times do
+        compressed = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
+
+        assert_equal repetitive_data, Brotli.inflate(compressed, dictionary: dictionary_data)
+      end
+    end
+
     test "inflate without dictionary fails on dictionary-compressed data" do
       compressed = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
 

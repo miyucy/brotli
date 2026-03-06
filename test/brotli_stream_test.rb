@@ -183,6 +183,18 @@ class BrotliStreamTest < Test::Unit::TestCase
       assert_equal data, decompressed
     end
 
+    test "dictionary-backed streaming compressors can be created repeatedly" do
+      dictionary = "The quick brown fox jumps over the lazy dog"
+      data = dictionary * 12
+
+      20.times do
+        compressor = Brotli::Compressor.new(dictionary: dictionary)
+        compressed = compressor.process(data) + compressor.finish
+
+        assert_equal data, Brotli.inflate(compressed, dictionary: dictionary)
+      end
+    end
+
     test "decompressor without dictionary fails for dictionary stream" do
       dictionary = "The quick brown fox jumps over the lazy dog"
       data = dictionary * 12

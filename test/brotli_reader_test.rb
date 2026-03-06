@@ -3,10 +3,40 @@
 require "test_helper"
 
 class BrotliReaderTest < Test::Unit::TestCase
+  class IncrementalCompressedIO
+    def initialize(chunks)
+      @chunks = chunks.dup
+      @closed = false
+    end
+
+    def read(_length = nil)
+      raise "unexpected blocking read"
+    end
+
+    def readpartial(_length)
+      raise EOFError if @chunks.empty?
+
+      @chunks.shift
+    end
+
+    def close
+      @closed = true
+    end
+
+    def closed?
+      @closed
+    end
+  end
+
   def testdata
     @testdata ||= File.binread(
       File.expand_path(File.join("..", "vendor", "brotli", "tests", "testdata", "alice29.txt"), __dir__)
     )
+  end
+
+  def incremental_compressed_io(data, slice_size: 3)
+    chunks = Brotli.deflate(data).bytes.each_slice(slice_size).map { |chunk| chunk.pack("C*") }
+    IncrementalCompressedIO.new(chunks)
   end
 
   test "read all" do
@@ -86,6 +116,34 @@ class BrotliReaderTest < Test::Unit::TestCase
     io2 = StringIO.new(Brotli.deflate(text))
     reader2 = Brotli::Reader.new(io2)
     assert_equal ["alpha\n", "beta\n", "gamma\n"], reader2.each_line.to_a
+  end
+
+  test "small reads use readpartial on incremental io" do
+    reader = Brotli::Reader.new(incremental_compressed_io("alpha\nbeta\n"))
+
+    assert_equal false, reader.eof?
+    assert_equal "a", reader.read(1)
+    assert_equal "l", reader.readpartial(1)
+    assert_equal "pha\n", reader.gets
+    assert_equal "beta\n", reader.gets
+    assert_nil reader.gets
+    assert_equal true, reader.eof?
+  end
+
+  test "gets nil returns remaining data once and then nil" do
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate("hello")))
+
+    assert_equal "hello", reader.gets(nil)
+    assert_nil reader.gets(nil)
+
+    reader2 = Brotli::Reader.new(StringIO.new(Brotli.deflate("hello")))
+    assert_equal ["hello"], reader2.each_line(nil).first(2)
+  end
+
+  test "gets nil returns nil for an empty stream" do
+    reader = Brotli::Reader.new(StringIO.new(Brotli.deflate("")))
+
+    assert_nil reader.gets(nil)
   end
 
   test "close and closed?" do
