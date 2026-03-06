@@ -237,7 +237,9 @@ typedef struct {
     BrotliEncoderState* s;
     buffer_t* buffer;
     BROTLI_BOOL finished;
+#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     BrotliEncoderPreparedDictionary* prepared_dict;
+#endif
 } brotli_deflate_args_t;
 
 static void*
@@ -306,7 +308,9 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     args.finished = BROTLI_FALSE;
 
     /* Set dictionary parameters */
+#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     args.prepared_dict = NULL;
+#endif
     if (!NIL_P(dict)) {
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
         StringValue(dict);
@@ -383,7 +387,9 @@ static VALUE rb_cBrotliDecompressor;
 
 typedef struct {
     BrotliEncoderState* state;
+#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     BrotliEncoderPreparedDictionary* prepared_dict;
+#endif
     VALUE dict;
     BROTLI_BOOL finished;
 } brotli_encoder_t;
@@ -1166,7 +1172,9 @@ rb_compressor_alloc(VALUE klass)
     brotli_compressor_t *br;
     VALUE obj = TypedData_Make_Struct(klass, brotli_compressor_t, &brotli_compressor_data_type, br);
     br->encoder.state = BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL);
+#if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
     br->encoder.prepared_dict = NULL;
+#endif
     br->encoder.dict = Qnil;
     br->encoder.finished = BROTLI_FALSE;
     if (!br->encoder.state) {
