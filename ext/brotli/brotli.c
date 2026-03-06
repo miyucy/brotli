@@ -353,6 +353,7 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     delete_buffer(args.buffer);
     BrotliEncoderDestroyInstance(args.s);
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
+    /* Prepared dictionaries remain caller-owned after attach. */
     if (args.prepared_dict) {
         BrotliEncoderDestroyPreparedDictionary(args.prepared_dict);
         args.prepared_dict = NULL;
@@ -455,6 +456,7 @@ brotli_encoder_destroy(brotli_encoder_t* encoder)
         encoder->state = NULL;
     }
 #if defined(HAVE_BROTLIENCODERPREPAREDICTIONARY) && defined(HAVE_BROTLIENCODERATTACHPREPAREDDICTIONARY)
+    /* Prepared dictionaries remain caller-owned after attach. */
     if (encoder->prepared_dict) {
         BrotliEncoderDestroyPreparedDictionary(encoder->prepared_dict);
         encoder->prepared_dict = NULL;
@@ -1583,6 +1585,20 @@ rb_decompressor_can_accept_more_data(VALUE self)
     return (br->finished || brotli_decompressor_needs_output_drain(br)) ? Qfalse : Qtrue;
 }
 
+static VALUE
+rb_decompressor_unused_data(VALUE self)
+{
+    brotli_decompressor_t *br;
+    TypedData_Get_Struct(self, brotli_decompressor_t, &brotli_decompressor_data_type, br);
+    if (!br->state) {
+        rb_raise(rb_eBrotli, "Decompressor is closed");
+    }
+    if (!br->finished || NIL_P(br->pending_input)) {
+        return rb_str_new("", 0);
+    }
+    return rb_str_dup(br->pending_input);
+}
+
 /*******************************************************************************
  * entry
  ******************************************************************************/
@@ -1627,6 +1643,7 @@ Init_brotli(void)
     rb_define_method(rb_cBrotliDecompressor, "is_finished", rb_decompressor_is_finished, 0);
     rb_define_method(rb_cBrotliDecompressor, "finished?", rb_decompressor_is_finished, 0);
     rb_define_method(rb_cBrotliDecompressor, "can_accept_more_data", rb_decompressor_can_accept_more_data, 0);
+    rb_define_method(rb_cBrotliDecompressor, "unused_data", rb_decompressor_unused_data, 0);
 
     rb_Writer = rb_define_class_under(rb_mBrotli, "Writer", rb_cObject);
     rb_define_alloc_func(rb_Writer, rb_writer_alloc);

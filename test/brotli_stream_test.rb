@@ -65,12 +65,15 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal testdata, decompressed
   end
 
-  test "decompressor accepts trailing bytes in the same input chunk" do
+  test "decompressor exposes trailing bytes in the same input chunk" do
     decompressor = Brotli::Decompressor.new
 
     assert_equal "abc", decompressor.process(Brotli.deflate("abc") + "x")
     assert_equal true, decompressor.finished?
     assert_equal false, decompressor.can_accept_more_data
+    assert_equal "x", decompressor.unused_data
+    assert_equal "", decompressor.process("")
+    assert_equal "x", decompressor.unused_data
   end
 
   test "decompressor accepts empty input after finish and rejects non-empty" do
@@ -142,6 +145,24 @@ class BrotliStreamTest < Test::Unit::TestCase
     end
 
     assert_equal data, decompressed
+  end
+
+  test "decompressor preserves trailing bytes after draining bounded output" do
+    data = ("hello world\n" * 5_000)
+    tail = "tail"
+    compressed = Brotli.deflate(data) + tail
+    decompressor = Brotli::Decompressor.new
+    decompressed = +""
+
+    output = decompressor.process(compressed, output_buffer_limit: 256)
+    decompressed << output
+
+    until decompressor.finished?
+      decompressed << decompressor.process("", output_buffer_limit: 256)
+    end
+
+    assert_equal data, decompressed
+    assert_equal tail, decompressor.unused_data
   end
 
   test "decompressor rejects new input while output is still pending" do
