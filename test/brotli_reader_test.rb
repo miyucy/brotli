@@ -148,10 +148,6 @@ class BrotliReaderTest < Test::Unit::TestCase
   end
 
   sub_test_case "dictionary support" do
-    def setup
-      omit "Dictionary tests are skipped" if Brotli.version < "1.1.0"
-    end
-
     test "reader works with dictionary" do
       dictionary = "The quick brown fox jumps over the lazy dog"
       data = dictionary * 10
