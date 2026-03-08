@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require_relative "lib/brotli/version"
 
 Gem::Specification.new do |spec|
@@ -6,22 +8,27 @@ Gem::Specification.new do |spec|
   spec.authors       = ["miyucy"]
   spec.email         = ["fistfvck@gmail.com"]
 
-  spec.summary       = "Brotli compressor/decompressor"
-  spec.description   = "Brotli compressor/decompressor"
+  spec.summary       = "Ruby bindings for Brotli compression"
+  spec.description   = "Native Ruby bindings for Brotli compression and decompression."
   spec.homepage      = "https://github.com/miyucy/brotli"
   spec.license       = "MIT"
+  spec.required_ruby_version = ">= 3.1"
 
-  tracked_files = Dir.chdir(__dir__) { `git ls-files -z`.split("\x0") }
-  vendored_brotli_files = Dir.chdir(__dir__) do
-    Dir["vendor/brotli/c/{common,enc,dec,include}/**/*"].select { |path| File.file?(path) }
+  spec.files = Dir.chdir(__dir__) do
+    (
+      Dir["lib/**/*.rb", "vendor/brotli/c/{common,dec,enc,include}/**/*.{c,h}"] +
+      %w[
+        LICENSE.txt
+        README.md
+        ext/brotli/brotli.c
+        ext/brotli/brotli.h
+        ext/brotli/buffer.c
+        ext/brotli/buffer.h
+        ext/brotli/extconf.rb
+        vendor/brotli/LICENSE
+      ]
+    ).sort
   end
-
-  spec.files = tracked_files
-               .reject { |path| path == "vendor/brotli" || path.start_with?("test/") }
-               .concat(vendored_brotli_files)
-               .append("vendor/brotli/LICENSE")
-               .sort
-               .uniq
   spec.require_paths = ["lib"]
   spec.extensions    = ["ext/brotli/extconf.rb"]
 end

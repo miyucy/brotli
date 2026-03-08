@@ -23,7 +23,7 @@ class BrotliTest < Test::Unit::TestCase
 
   test ".version" do
     puts "Brotli version: #{Brotli.version}"
-    assert_operator Gem::Version.new(Brotli.version), :>=, Gem::Version.new("1.0.9")
+    assert_operator Gem::Version.new(Brotli.version), :>=, Gem::Version.new("1.2.0")
   end
 
   sub_test_case ".deflate" do
@@ -100,10 +100,6 @@ class BrotliTest < Test::Unit::TestCase
   end
 
   sub_test_case "dictionary support" do
-    def setup
-      omit "Dictionary tests are skipped" if Brotli.version < "1.1.0"
-    end
-
     def dictionary_data
       "The quick brown fox jumps over the lazy dog"
     end
