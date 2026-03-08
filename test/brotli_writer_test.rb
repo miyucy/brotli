@@ -4,6 +4,33 @@ require "test_helper"
 require "tempfile"
 
 class BrotliWriterTest < Test::Unit::TestCase
+  class CloseErrorIO
+    attr_reader :close_calls
+
+    def initialize
+      @io = StringIO.new
+      @close_calls = 0
+    end
+
+    def write(data)
+      @io.write(data)
+    end
+
+    def flush
+      @io.flush
+    end
+
+    def close
+      @close_calls += 1
+      @io.close
+      raise IOError, "close failed"
+    end
+
+    def closed?
+      @io.closed?
+    end
+  end
+
   def setup
     @tempfile = Tempfile.new
   end
@@ -43,6 +70,46 @@ class BrotliWriterTest < Test::Unit::TestCase
     assert_equal false, decompressor.finished?
 
     writer.close
+  end
+
+  test "close still closes io when finish raises" do
+    original_finish = Brotli::Compressor.instance_method(:finish)
+    Brotli::Compressor.class_eval do
+      remove_method :finish
+      define_method(:finish) { raise Brotli::Error, "finish failed" }
+    end
+
+    writer = Brotli::Writer.new(@tempfile)
+
+    error = assert_raise(Brotli::Error) { writer.close }
+
+    assert_equal "finish failed", error.message
+    assert_equal true, writer.closed?
+    assert_equal true, @tempfile.closed?
+
+    assert_raise(Brotli::Error) { writer.write("abc") }
+  ensure
+    Brotli::Compressor.class_eval do
+      remove_method :finish
+      define_method(:finish, original_finish)
+    end
+  end
+
+  test "close marks writer closed when io.close raises" do
+    io = CloseErrorIO.new
+    writer = Brotli::Writer.new(io)
+
+    assert_equal 5, writer.write("hello")
+
+    error = assert_raise(IOError) { writer.close }
+
+    assert_equal "close failed", error.message
+    assert_equal true, writer.closed?
+    assert_equal true, io.closed?
+    assert_equal 1, io.close_calls
+    assert_equal io, writer.close
+
+    assert_raise(Brotli::Error) { writer.write("abc") }
   end
 
   test "raise" do

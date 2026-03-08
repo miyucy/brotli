@@ -167,11 +167,7 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
         args.dict_len = 0;
     }
 
-#ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(brotli_inflate_no_gvl, &args, NULL, NULL);
-#else
-    brotli_inflate_no_gvl(&args);
-#endif
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
 
@@ -385,11 +381,7 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
         }
     }
 
-#ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(brotli_deflate_no_gvl, &args, NULL, NULL);
-#else
-    brotli_deflate_no_gvl(&args);
-#endif
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
     if (args.finished == BROTLI_TRUE) {
@@ -415,7 +407,7 @@ static VALUE brotli_version(VALUE klass) {
 
     (void)klass;
     snprintf(version, sizeof(version), "%u.%u.%u", ver >> 24, (ver >> 12) & 0xFFF, ver & 0xFFF);
-    return rb_str_new2(version);
+    return rb_str_new_cstr(version);
 }
 
 /*******************************************************************************
@@ -504,21 +496,13 @@ static void* decompress_no_gvl(void *ptr) {
 static void
 brotli_encoder_step(brotli_encoder_args_t *args)
 {
-#ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(compress_no_gvl, (void*)args, NULL, NULL);
-#else
-    compress_no_gvl((void*)args);
-#endif
 }
 
 static void
 brotli_decompressor_step(brotli_decoder_args_t *args)
 {
-#ifdef HAVE_RUBY_THREAD_H
     rb_thread_call_without_gvl(decompress_no_gvl, (void*)args, NULL, NULL);
-#else
-    decompress_no_gvl((void*)args);
-#endif
 }
 
 static void
@@ -659,7 +643,7 @@ brotli_compressor_memsize(const void *p)
 static const rb_data_type_t brotli_compressor_data_type = {
     "brotli_compressor",
     { 0, brotli_compressor_free, brotli_compressor_memsize },
-    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
+    0, 0, RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_WB_PROTECTED
 };
 
 static VALUE
@@ -1125,9 +1109,7 @@ rb_decompressor_unused_data(VALUE self)
 void
 Init_brotli(void)
 {
-#if HAVE_RB_EXT_RACTOR_SAFE
     rb_ext_ractor_safe(true);
-#endif
 
     VALUE rb_mBrotli;
     rb_mBrotli = rb_define_module("Brotli");

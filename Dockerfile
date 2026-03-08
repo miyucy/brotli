@@ -3,29 +3,32 @@ FROM gcc:${GCC_VERSION}
 
 ARG USE_SYSTEM_BROTLI=true
 
-# Install Ruby and development dependencies
 RUN apt-get update && apt-get install -y \
+    cmake \
     git \
-    libbrotli-dev \
     pkg-config \
     ruby \
     ruby-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Verify GCC version
 RUN gcc --version
 
-# Set working directory
 WORKDIR /app
-
-# Copy source code
 COPY . .
 
-# Install bundler and dependencies
+# Build and install Brotli 1.2.0 as a system library from vendored source
+RUN if [ "${USE_SYSTEM_BROTLI}" = "true" ]; then \
+        cmake -S vendor/brotli -B vendor/brotli/build \
+              -DCMAKE_INSTALL_PREFIX=/usr \
+              -DBUILD_SHARED_LIBS=ON && \
+        cmake --build vendor/brotli/build && \
+        cmake --install vendor/brotli/build && \
+        ldconfig; \
+    fi
+
 RUN gem install bundler
 RUN bundle install
 
-# Build and test
 RUN if [ "${USE_SYSTEM_BROTLI}" = "true" ]; then \
         echo "Building with system Brotli" && \
         bundle exec rake compile; \

@@ -99,6 +99,20 @@ class BrotliTest < Test::Unit::TestCase
     end
   end
 
+  sub_test_case "Ractor safe" do
+    test "deflate and inflate work in non-main Ractor" do
+      omit "Ractor not defined" unless defined?(::Ractor)
+
+      ractors = Array.new(2) do
+        Ractor.new(testdata) do |testdata|
+          Brotli.inflate(Brotli.deflate(testdata)) == testdata
+        end
+      end
+      result_method = Ractor.instance_method(:value) rescue Ractor.instance_method(:take)
+      assert_equal [true, true], ractors.map { |r| result_method.bind_call(r) }
+    end
+  end
+
   sub_test_case "dictionary support" do
     def dictionary_data
       "The quick brown fox jumps over the lazy dog"

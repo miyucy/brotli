@@ -3,10 +3,7 @@
 
 #include "ruby.h"
 
-// ruby/thread.h is ruby 2.x
-#ifdef HAVE_RUBY_THREAD_H
 #include "ruby/thread.h"
-#endif
 
 #include "brotli/encode.h"
 #include "brotli/decode.h"
