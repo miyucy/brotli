@@ -19,7 +19,14 @@ def remove_generated_vendored_dirs
 end
 
 def copy_vendored_sources
-  Dir[File.join(VENDORED_SOURCE_DIR, "{common,dec,enc,include}", "**", "*.{c,h}")].sort.each do |source|
+  sources = Dir[File.join(VENDORED_SOURCE_DIR, "{common,dec,enc,include}", "**", "*.{c,h}")].sort
+
+  if sources.empty?
+    abort "ERROR: Vendored Brotli sources not found at #{VENDORED_SOURCE_DIR}.\n" \
+          "Install system libbrotli-dev >= #{MINIMUM_BROTLI_VERSION} or ensure vendor sources are present."
+  end
+
+  sources.each do |source|
     relative_path = source.delete_prefix("#{VENDORED_SOURCE_DIR}/")
     destination = File.join(BUILD_DIR, relative_path)
 
