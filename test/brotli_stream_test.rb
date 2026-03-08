@@ -153,6 +153,62 @@ class BrotliStreamTest < Test::Unit::TestCase
     assert_equal data, decompressed
   end
 
+  test "decompressor rejects non-positive output_buffer_limit" do
+    compressed = Brotli.deflate("hello world")
+
+    [0, -1].each do |limit|
+      decompressor = Brotli::Decompressor.new
+
+      error = assert_raise(ArgumentError) do
+        decompressor.process(compressed, output_buffer_limit: limit)
+      end
+
+      assert_equal "output_buffer_limit must be positive", error.message
+      assert_equal true, decompressor.can_accept_more_data
+      assert_equal "hello world", decompressor.process(compressed)
+      assert_equal true, decompressor.finished?
+    end
+  end
+
+  test "decompressor rejects new input while output is still pending" do
+    compressed = File.binread(fixture("zerosukkanooa.compressed"))
+    decompressor = Brotli::Decompressor.new
+
+    output = decompressor.process(compressed.byteslice(0, compressed.bytesize - 1), output_buffer_limit: 10_240)
+
+    assert_operator output.bytesize, :<=, 10_240
+    assert_equal false, decompressor.can_accept_more_data
+
+    assert_raise Brotli::Error do
+      decompressor.process(compressed.byteslice(-1, 1))
+    end
+  end
+
+  test "stream compressor snapshots dictionary bytes at initialization" do
+    original_dictionary = "The quick brown fox jumps over the lazy dog"
+    dictionary = original_dictionary.dup
+    data = original_dictionary * 12
+    compressor = Brotli::Compressor.new(dictionary: dictionary)
+
+    dictionary.replace("x" * dictionary.bytesize)
+    compressed = compressor.process(data) + compressor.finish
+
+    assert_equal data, Brotli.inflate(compressed, dictionary: original_dictionary)
+  end
+
+  test "stream decompressor snapshots dictionary bytes at initialization" do
+    original_dictionary = "The quick brown fox jumps over the lazy dog"
+    dictionary = original_dictionary.dup
+    data = original_dictionary * 12
+    compressed = Brotli.deflate(data, dictionary: original_dictionary)
+    decompressor = Brotli::Decompressor.new(dictionary: dictionary)
+
+    dictionary.replace("x" * dictionary.bytesize)
+
+    assert_equal data, decompressor.process(compressed)
+    assert_equal true, decompressor.finished?
+  end
+
   sub_test_case "dictionary support" do
     test "stream compressor and decompressor work with dictionary" do
       dictionary = "The quick brown fox jumps over the lazy dog"

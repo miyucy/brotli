@@ -3,6 +3,33 @@
 require "test_helper"
 
 class BrotliReaderTest < Test::Unit::TestCase
+  class CloseErrorIO
+    attr_reader :close_calls
+
+    def initialize(data)
+      @io = StringIO.new(data)
+      @close_calls = 0
+    end
+
+    def read(length = nil)
+      @io.read(length)
+    end
+
+    def readpartial(length)
+      @io.readpartial(length)
+    end
+
+    def close
+      @close_calls += 1
+      @io.close
+      raise IOError, "close failed"
+    end
+
+    def closed?
+      @io.closed?
+    end
+  end
+
   class IncrementalCompressedIO
     def initialize(chunks)
       @chunks = chunks.dup
@@ -129,6 +156,21 @@ class BrotliReaderTest < Test::Unit::TestCase
     assert_raise Brotli::Error do
       reader.read
     end
+  end
+
+  test "close marks reader closed even when io.close raises" do
+    io = CloseErrorIO.new(Brotli.deflate("hello"))
+    reader = Brotli::Reader.new(io)
+
+    error = assert_raise(IOError) { reader.close }
+
+    assert_equal "close failed", error.message
+    assert_equal true, reader.closed?
+    assert_equal true, io.closed?
+    assert_equal 1, io.close_calls
+    assert_equal io, reader.close
+
+    assert_raise(Brotli::Error) { reader.read }
   end
 
   test "raise when initialized with nil io" do
