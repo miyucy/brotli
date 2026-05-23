@@ -194,11 +194,11 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
  * deflate
  ******************************************************************************/
 
-static void
+static const char *
 brotli_deflate_set_mode(BrotliEncoderState* s, VALUE value)
 {
     if (NIL_P(value)) {
-        return;
+        return NULL;
     }
 
     if (value == ID2SYM(id_generic)) {
@@ -208,68 +208,87 @@ brotli_deflate_set_mode(BrotliEncoderState* s, VALUE value)
     } else if (value == ID2SYM(id_font)) {
         BrotliEncoderSetParameter(s, BROTLI_PARAM_MODE, BROTLI_MODE_FONT);
     } else {
-        rb_raise(rb_eArgError, "invalid mode");
+        return "invalid mode";
     }
+
+    return NULL;
 }
 
-static void
+static const char *
 brotli_deflate_set_quality(BrotliEncoderState* s, VALUE value)
 {
     int32_t param;
 
     if (NIL_P(value)) {
-        return;
+        return NULL;
     }
 
     param = NUM2INT(value);
     if (0 <= param && param <= 11) {
         BrotliEncoderSetParameter(s, BROTLI_PARAM_QUALITY, param);
     } else {
-        rb_raise(rb_eArgError, "invalid quality value. Should be 0 to 11.");
+        return "invalid quality value. Should be 0 to 11.";
     }
+
+    return NULL;
 }
 
-static void
+static const char *
 brotli_deflate_set_lgwin(BrotliEncoderState* s, VALUE value)
 {
     int32_t param;
 
     if (NIL_P(value)) {
-        return;
+        return NULL;
     }
 
     param = NUM2INT(value);
     if (10 <= param && param <= 24) {
         BrotliEncoderSetParameter(s, BROTLI_PARAM_LGWIN, param);
     } else {
-        rb_raise(rb_eArgError, "invalid lgwin value. Should be 10 to 24.");
+        return "invalid lgwin value. Should be 10 to 24.";
     }
+
+    return NULL;
 }
 
-static void
+static const char *
 brotli_deflate_set_lgblock(BrotliEncoderState* s, VALUE value)
 {
     int32_t param;
 
     if (NIL_P(value)) {
-        return;
+        return NULL;
     }
 
     param = NUM2INT(value);
     if (param == 0 || (16 <= param && param <= 24)) {
         BrotliEncoderSetParameter(s, BROTLI_PARAM_LGBLOCK, param);
     } else {
-        rb_raise(rb_eArgError, "invalid lgblock value. Should be 0 or 16 to 24.");
+        return "invalid lgblock value. Should be 0 or 16 to 24.";
     }
+
+    return NULL;
 }
 
-static void
+static const char *
 brotli_deflate_parse_options(BrotliEncoderState* s, VALUE opts)
 {
-    brotli_deflate_set_mode(s, brotli_hash_lookup(opts, id_mode));
-    brotli_deflate_set_quality(s, brotli_hash_lookup(opts, id_quality));
-    brotli_deflate_set_lgwin(s, brotli_hash_lookup(opts, id_lgwin));
-    brotli_deflate_set_lgblock(s, brotli_hash_lookup(opts, id_lgblock));
+    const char *err;
+
+    err = brotli_deflate_set_mode(s, brotli_hash_lookup(opts, id_mode));
+    if (err) {
+        return err;
+    }
+    err = brotli_deflate_set_quality(s, brotli_hash_lookup(opts, id_quality));
+    if (err) {
+        return err;
+    }
+    err = brotli_deflate_set_lgwin(s, brotli_hash_lookup(opts, id_lgwin));
+    if (err) {
+        return err;
+    }
+    return brotli_deflate_set_lgblock(s, brotli_hash_lookup(opts, id_lgblock));
 }
 
 typedef struct {
@@ -340,8 +359,9 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     VALUE opts = Qnil;
     VALUE value = Qnil;
     VALUE dict = Qnil;
-    brotli_deflate_args_t args;
+    brotli_deflate_args_t args = {0};
     size_t max_compressed_size;
+    const char *err;
 
     (void)self;
 
@@ -355,7 +375,11 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
     args.s = brotli_encoder_state_create();
-    brotli_deflate_parse_options(args.s, opts);
+    err = brotli_deflate_parse_options(args.s, opts);
+    if (err) {
+        brotli_deflate_cleanup(&args);
+        rb_raise(rb_eArgError, "%s", err);
+    }
     max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
     args.buffer = create_buffer(max_compressed_size);
     args.finished = BROTLI_FALSE;
@@ -672,12 +696,16 @@ rb_compressor_initialize(int argc, VALUE* argv, VALUE self)
 {
     VALUE opts = Qnil;
     brotli_compressor_t *br;
+    const char *err;
 
     rb_scan_args(argc, argv, "01", &opts);
 
     TypedData_Get_Struct(self, brotli_compressor_t, &brotli_compressor_data_type, br);
     brotli_encoder_reset(&br->encoder);
-    brotli_deflate_parse_options(br->encoder.state, opts);
+    err = brotli_deflate_parse_options(br->encoder.state, opts);
+    if (err) {
+        rb_raise(rb_eArgError, "%s", err);
+    }
     brotli_encoder_attach_dictionary(&br->encoder, opts);
 
     return self;
