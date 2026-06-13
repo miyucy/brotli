@@ -132,6 +132,13 @@ brotli_inflate_no_gvl(void *arg)
 }
 
 static VALUE
+brotli_inflate_take_result(VALUE arg)
+{
+    brotli_inflate_args_t *args = (brotli_inflate_args_t *)arg;
+    return rb_str_new(args->buffer->ptr, args->buffer->used);
+}
+
+static VALUE
 brotli_inflate(int argc, VALUE *argv, VALUE self)
 {
     VALUE str = Qnil;
@@ -174,7 +181,12 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     RB_GC_GUARD(dict);
 
     if (args.r == BROTLI_DECODER_RESULT_SUCCESS) {
-        value = rb_str_new(args.buffer->ptr, args.buffer->used);
+        int state = 0;
+        value = rb_protect(brotli_inflate_take_result, (VALUE)&args, &state);
+        if (state) {
+            brotli_inflate_cleanup(&args);
+            rb_jump_tag(state);
+        }
     } else if (args.r == BROTLI_DECODER_RESULT_ERROR) {
         error = BrotliDecoderErrorString(BrotliDecoderGetErrorCode(args.s));
     } else if (args.r == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT) {
@@ -367,6 +379,13 @@ brotli_deflate_no_gvl(void *arg)
 }
 
 static VALUE
+brotli_deflate_take_result(VALUE arg)
+{
+    brotli_deflate_args_t *args = (brotli_deflate_args_t *)arg;
+    return rb_str_new(args->buffer->ptr, args->buffer->used);
+}
+
+static VALUE
 brotli_deflate(int argc, VALUE *argv, VALUE self)
 {
     VALUE str = Qnil;
@@ -425,7 +444,12 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
     if (args.finished == BROTLI_TRUE) {
-        value = rb_str_new(args.buffer->ptr, args.buffer->used);
+        int state = 0;
+        value = rb_protect(brotli_deflate_take_result, (VALUE)&args, &state);
+        if (state) {
+            brotli_deflate_cleanup(&args);
+            rb_jump_tag(state);
+        }
     }
 
     brotli_deflate_cleanup(&args);
