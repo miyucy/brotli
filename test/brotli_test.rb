@@ -63,6 +63,24 @@ class BrotliTest < Test::Unit::TestCase
         Brotli.deflate(testdata, 42)
       end
     end
+
+    test "raise ArgumentError if numeric option is non-integer" do
+      assert_raise ArgumentError do
+        Brotli.deflate(testdata, quality: "foo")
+      end
+      assert_raise ArgumentError do
+        Brotli.deflate(testdata, lgwin: "foo")
+      end
+      assert_raise ArgumentError do
+        Brotli.deflate(testdata, lgblock: Object.new)
+      end
+    end
+
+    test "raise ArgumentError if quality is a Float" do
+      assert_raise ArgumentError do
+        Brotli.deflate(testdata, quality: 5.0)
+      end
+    end
   end
 
   sub_test_case ".inflate" do
@@ -134,6 +152,20 @@ class BrotliTest < Test::Unit::TestCase
 
       assert_raise Brotli::Error do
         Brotli.inflate(compressed)
+      end
+    end
+
+    test "deflate raises TypeError if dictionary is not a string" do
+      assert_raise TypeError do
+        Brotli.deflate(repetitive_data, dictionary: Object.new)
+      end
+    end
+
+    test "inflate raises TypeError if dictionary is not a string" do
+      compressed = Brotli.deflate(repetitive_data, dictionary: dictionary_data)
+
+      assert_raise TypeError do
+        Brotli.inflate(compressed, dictionary: Object.new)
       end
     end
   end

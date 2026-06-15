@@ -132,6 +132,13 @@ brotli_inflate_no_gvl(void *arg)
 }
 
 static VALUE
+brotli_inflate_take_result(VALUE arg)
+{
+    brotli_inflate_args_t *args = (brotli_inflate_args_t *)arg;
+    return rb_str_new(args->buffer->ptr, args->buffer->used);
+}
+
+static VALUE
 brotli_inflate(int argc, VALUE *argv, VALUE self)
 {
     VALUE str = Qnil;
@@ -139,7 +146,7 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     VALUE value = Qnil;
     VALUE dict = Qnil;
     const char *error = NULL;
-    brotli_inflate_args_t args;
+    brotli_inflate_args_t args = {0};
 
     (void)self;
 
@@ -151,6 +158,9 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
 
     StringValue(str);
     dict = brotli_hash_lookup(opts, id_dictionary);
+    if (!NIL_P(dict)) {
+        StringValue(dict);
+    }
 
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
@@ -159,7 +169,6 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     args.r = BROTLI_DECODER_RESULT_ERROR;
 
     if (!NIL_P(dict)) {
-        StringValue(dict);
         args.dict = (uint8_t*)RSTRING_PTR(dict);
         args.dict_len = (size_t)RSTRING_LEN(dict);
     } else {
@@ -172,7 +181,12 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     RB_GC_GUARD(dict);
 
     if (args.r == BROTLI_DECODER_RESULT_SUCCESS) {
-        value = rb_str_new(args.buffer->ptr, args.buffer->used);
+        int state = 0;
+        value = rb_protect(brotli_inflate_take_result, (VALUE)&args, &state);
+        if (state) {
+            brotli_inflate_cleanup(&args);
+            rb_jump_tag(state);
+        }
     } else if (args.r == BROTLI_DECODER_RESULT_ERROR) {
         error = BrotliDecoderErrorString(BrotliDecoderGetErrorCode(args.s));
     } else if (args.r == BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT) {
@@ -217,15 +231,19 @@ brotli_deflate_set_mode(BrotliEncoderState* s, VALUE value)
 static const char *
 brotli_deflate_set_quality(BrotliEncoderState* s, VALUE value)
 {
-    int32_t param;
+    long param;
 
     if (NIL_P(value)) {
         return NULL;
     }
 
-    param = NUM2INT(value);
+    if (!FIXNUM_P(value)) {
+        return "invalid quality value. Should be 0 to 11.";
+    }
+
+    param = FIX2LONG(value);
     if (0 <= param && param <= 11) {
-        BrotliEncoderSetParameter(s, BROTLI_PARAM_QUALITY, param);
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_QUALITY, (uint32_t)param);
     } else {
         return "invalid quality value. Should be 0 to 11.";
     }
@@ -236,15 +254,19 @@ brotli_deflate_set_quality(BrotliEncoderState* s, VALUE value)
 static const char *
 brotli_deflate_set_lgwin(BrotliEncoderState* s, VALUE value)
 {
-    int32_t param;
+    long param;
 
     if (NIL_P(value)) {
         return NULL;
     }
 
-    param = NUM2INT(value);
+    if (!FIXNUM_P(value)) {
+        return "invalid lgwin value. Should be 10 to 24.";
+    }
+
+    param = FIX2LONG(value);
     if (10 <= param && param <= 24) {
-        BrotliEncoderSetParameter(s, BROTLI_PARAM_LGWIN, param);
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_LGWIN, (uint32_t)param);
     } else {
         return "invalid lgwin value. Should be 10 to 24.";
     }
@@ -255,15 +277,19 @@ brotli_deflate_set_lgwin(BrotliEncoderState* s, VALUE value)
 static const char *
 brotli_deflate_set_lgblock(BrotliEncoderState* s, VALUE value)
 {
-    int32_t param;
+    long param;
 
     if (NIL_P(value)) {
         return NULL;
     }
 
-    param = NUM2INT(value);
+    if (!FIXNUM_P(value)) {
+        return "invalid lgblock value. Should be 0 or 16 to 24.";
+    }
+
+    param = FIX2LONG(value);
     if (param == 0 || (16 <= param && param <= 24)) {
-        BrotliEncoderSetParameter(s, BROTLI_PARAM_LGBLOCK, param);
+        BrotliEncoderSetParameter(s, BROTLI_PARAM_LGBLOCK, (uint32_t)param);
     } else {
         return "invalid lgblock value. Should be 0 or 16 to 24.";
     }
@@ -353,6 +379,13 @@ brotli_deflate_no_gvl(void *arg)
 }
 
 static VALUE
+brotli_deflate_take_result(VALUE arg)
+{
+    brotli_deflate_args_t *args = (brotli_deflate_args_t *)arg;
+    return rb_str_new(args->buffer->ptr, args->buffer->used);
+}
+
+static VALUE
 brotli_deflate(int argc, VALUE *argv, VALUE self)
 {
     VALUE str = Qnil;
@@ -371,6 +404,9 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     }
     StringValue(str);
     dict = brotli_hash_lookup(opts, id_dictionary);
+    if (!NIL_P(dict)) {
+        StringValue(dict);
+    }
 
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
@@ -386,7 +422,6 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
 
     args.prepared_dict = NULL;
     if (!NIL_P(dict)) {
-        StringValue(dict);
         args.prepared_dict = BrotliEncoderPrepareDictionary(
             BROTLI_SHARED_DICTIONARY_RAW,
             (size_t)RSTRING_LEN(dict),
@@ -409,7 +444,12 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
     if (args.finished == BROTLI_TRUE) {
-        value = rb_str_new(args.buffer->ptr, args.buffer->used);
+        int state = 0;
+        value = rb_protect(brotli_deflate_take_result, (VALUE)&args, &state);
+        if (state) {
+            brotli_deflate_cleanup(&args);
+            rb_jump_tag(state);
+        }
     }
 
     brotli_deflate_cleanup(&args);
