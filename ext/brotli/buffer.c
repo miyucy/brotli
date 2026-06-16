@@ -5,6 +5,7 @@
 #include <string.h>
 
 #define BUFFER_INITIAL_SIZE 1024
+#define BUFFER_MAX_SIZE (256 * 1024 * 1024)
 
 buffer_t*
 create_buffer(size_t initial)
@@ -45,6 +46,9 @@ buffer_size_for(size_t current, size_t required)
 static void
 expand_buffer(buffer_t* buffer, size_t required)
 {
+    if (required > BUFFER_MAX_SIZE) {
+        rb_raise(rb_eRuntimeError, "brotli: decompressed output exceeds maximum allowed size");
+    }
     buffer->size = buffer_size_for(buffer->size, required);
     buffer->ptr = ruby_xrealloc(buffer->ptr, buffer->size);
 }
