@@ -164,8 +164,12 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
 
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
-    args.s = brotli_decoder_state_create();
     args.buffer = create_buffer(BUFSIZ);
+    args.s = BrotliDecoderCreateInstance(brotli_alloc, brotli_free, NULL);
+    if (!args.s) {
+        brotli_inflate_cleanup(&args);
+        rb_raise(rb_eNoMemError, "BrotliDecoderCreateInstance failed");
+    }
     args.r = BROTLI_DECODER_RESULT_ERROR;
 
     if (!NIL_P(dict)) {
@@ -410,14 +414,18 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
 
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
-    args.s = brotli_encoder_state_create();
+    max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
+    args.buffer = create_buffer(max_compressed_size);
+    args.s = BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL);
+    if (!args.s) {
+        brotli_deflate_cleanup(&args);
+        rb_raise(rb_eNoMemError, "BrotliEncoderCreateInstance failed");
+    }
     err = brotli_deflate_parse_options(args.s, opts);
     if (err) {
         brotli_deflate_cleanup(&args);
         rb_raise(rb_eArgError, "%s", err);
     }
-    max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
-    args.buffer = create_buffer(max_compressed_size);
     args.finished = BROTLI_FALSE;
 
     args.prepared_dict = NULL;

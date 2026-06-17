@@ -1,18 +1,41 @@
 #include "buffer.h"
-#include "ruby/ruby.h"
+#include "ruby.h"
 
 #include <stdint.h>
 #include <string.h>
 
 #define BUFFER_INITIAL_SIZE 1024
 
+struct buffer_alloc {
+    size_t size;
+    char *ptr;
+};
+
+static VALUE
+create_buffer_data(VALUE arg)
+{
+    struct buffer_alloc *a = (struct buffer_alloc *)arg;
+    a->ptr = ruby_xmalloc(a->size);
+    return Qnil;
+}
+
 buffer_t*
 create_buffer(size_t initial)
 {
     buffer_t *buffer = ruby_xmalloc(sizeof(*buffer));
+    struct buffer_alloc a;
+    int state = 0;
+
+    a.size = initial > 0 ? initial : BUFFER_INITIAL_SIZE;
+    a.ptr = NULL;
+    rb_protect(create_buffer_data, (VALUE)&a, &state);
+    if (state) {
+        ruby_xfree(buffer);
+        rb_jump_tag(state);
+    }
     buffer->used = 0;
-    buffer->size = initial > 0 ? initial : BUFFER_INITIAL_SIZE;
-    buffer->ptr = ruby_xmalloc(buffer->size);
+    buffer->size = a.size;
+    buffer->ptr = a.ptr;
     return buffer;
 }
 
