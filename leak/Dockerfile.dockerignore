@@ -1,0 +1,12 @@
+# Keep the build context small and free of host (darwin) artifacts.
+# NOTE: vendor/brotli (the vendored C sources) is intentionally NOT ignored —
+# the image builds with --enable-vendor.
+.git
+tmp
+pkg
+vendor/bundle
+.bundle
+.gemini
+lib/brotli/*.bundle
+lib/brotli/*.so
+**/*.o

@@ -1,0 +1,14 @@
+# LeakSanitizer suppressions for one-time Ruby interpreter boot/parse
+# allocations only.
+#
+# IMPORTANT: do NOT suppress ruby_xmalloc / rb_gc_impl_malloc / objspace_* —
+# brotli's own allocations (brotli_alloc, create_buffer) route through those
+# same frames, so suppressing them would hide the leaks we are hunting.
+# RUBY_FREE_AT_EXIT=1 already drops most interpreter noise; the intended
+# workflow is to GREP the report FOR brotli frames (brotli.c / buffer.c /
+# Brotli*), or the Fiddle probe, rather than to suppress broadly.
+leak:ruby_init
+leak:ruby_setup
+leak:ruby_options
+leak:rb_iseq_ibf_load
+leak:rb_parser_compile

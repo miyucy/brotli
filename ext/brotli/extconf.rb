@@ -127,5 +127,19 @@ if use_vendored_brotli
   $INCFLAGS << " -Ienc -Idec -Icommon -Iinclude"
 end
 
+# Leak-harness build hooks (inert unless the env var is set).
+# One append reaches brotli.c, buffer.c, and the vendored sources, because
+# add_vendored_sources_to_makefile rewrites ORIG_SRCS/OBJS after create_makefile.
+if ENV["BROTLI_DEBUG"] || ENV["BROTLI_ASAN"]
+  # Append -O0 last so it overrides any earlier optimization flag already in
+  # $CFLAGS (-O2/-O3/-Os/-Ofast/bare -O) -- the last -O on the command line wins
+  # for both gcc and clang. A gsub(/-O\d/) would miss -Os/-Ofast/-O.
+  $CFLAGS << " -O0 -g3 -fno-omit-frame-pointer"
+end
+if ENV["BROTLI_ASAN"]
+  $CFLAGS  << " -fsanitize=address"
+  $LDFLAGS << " -fsanitize=address"
+end
+
 create_makefile("brotli/brotli")
 add_vendored_sources_to_makefile if use_vendored_brotli
