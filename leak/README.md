@@ -26,7 +26,7 @@ leak (`LEAK_PROBE`) and asserts each detector reports it.
 | `rake leak:massif`   | Valgrind massif + `ms_print` | heap growth across iterations (plateau vs staircase) |
 | `rake leak:asan`     | AddressSanitizer (`detect_leaks=0`) | heap overflow / use-after-free in the C code |
 | `rake leak:fiu`      | libfiu `fiu-run` | forces malloc/realloc failure → exercises OOM cleanup |
-| `rake leak:faults`   | custom `LD_PRELOAD` shim | deterministically hits create_buffer (`FAIL_SIZE`) and the no-GVL realloc (`FAIL_REALLOC_N=1`) |
+| `rake leak:faults`   | custom `LD_PRELOAD` shim | deterministically hits create_buffer (`FAIL_SIZE`) and the no-GVL realloc cleanup (`FAIL_REALLOC_N=1`) |
 | `rake leak:memlimit` | `docker run --memory=64m` | unbounded *success-path* growth → exit 137 |
 | `rake leak:macos`    | macOS `leaks` (native) | quick host smoke test (filter to brotli frames) |
 | `rake leak:selftest` | all of the above | certifies each detector via a planted leak |
@@ -54,13 +54,20 @@ Latest self-test: **6/6 detector checks pass**; real-workload valgrind reports
 
 ## Targets
 
+All known OOM/longjmp defects are now fixed; the harness exists to keep them
+fixed and to catch regressions.
+
 - **Fixed** (should be clean): `create_buffer` and `rb_str_new` OOM leaks.
-- **F1 — still unfixed**: `append_buffer` → `expand_buffer` → `ruby_xrealloc`
-  runs inside the no-GVL worker. A realloc failure there longjmps without the
-  GVL (undefined behavior) while holding `args.buffer` + `args.s`. Reproduce it:
+- **F1 — fixed**: `append_buffer` → `expand_buffer` previously called
+  `ruby_xrealloc` inside the no-GVL worker, whose OOM longjmp without the GVL is
+  undefined behavior (while holding `args.buffer` + `args.s`). `buffer.c` now
+  uses plain `malloc`/`realloc`/`free`, returns `-1` on failure, and the
+  GVL-holding caller raises `NoMemoryError` after cleanup. Exercise the cleanup
+  path:
 
   ```sh
-  bundle exec rake leak:faults FAIL_REALLOC_N=1   # crashes or leaks → demonstrates F1
+  bundle exec rake leak:faults FAIL_REALLOC_N=1   # forces the no-GVL realloc to
+                                                  # fail → must clean up, not leak
   ```
 
 ## Build flags

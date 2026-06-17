@@ -13,18 +13,27 @@ static ID id_quality;
 static ID id_read;
 static ID id_text;
 
+/*
+ * Allocator callbacks handed to the Brotli encoder/decoder. Brotli allocates
+ * its internal buffers lazily *during* the compress/decompress calls, which we
+ * run inside rb_thread_call_without_gvl. A Ruby allocator must never be called
+ * without the GVL (it may trigger GC, or raise on failure -- both undefined
+ * off-GVL), so these use plain malloc/free. Brotli treats a NULL return as an
+ * allocation failure and fails the stream cleanly, which the callers surface as
+ * a Ruby exception with the GVL held.
+ */
 static inline void*
 brotli_alloc(void* opaque, size_t size)
 {
     (void)opaque;
-    return ruby_xmalloc(size);
+    return malloc(size);
 }
 
 static inline void
 brotli_free(void* opaque, void* address)
 {
     (void)opaque;
-    ruby_xfree(address);
+    free(address);
 }
 
 static VALUE
@@ -74,6 +83,7 @@ typedef struct {
     BrotliDecoderResult r;
     uint8_t* dict;
     size_t dict_len;
+    int oom;
 } brotli_inflate_args_t;
 
 static void
@@ -116,14 +126,19 @@ brotli_inflate_no_gvl(void *arg)
         if (r != BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
             break;
         }
-        append_buffer(buffer, output, BUFSIZ);
+        if (append_buffer(buffer, output, BUFSIZ) != 0) {
+            args->oom = 1;
+            break;
+        }
         available_out = BUFSIZ;
         next_out = output;
     }
 
     if (r == BROTLI_DECODER_RESULT_SUCCESS) {
         if (next_out != output) {
-            append_buffer(buffer, output, next_out - output);
+            if (append_buffer(buffer, output, next_out - output) != 0) {
+                args->oom = 1;
+            }
         }
     }
     args->r = r;
@@ -165,6 +180,9 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     args.str = (uint8_t*)RSTRING_PTR(str);
     args.len = (size_t)RSTRING_LEN(str);
     args.buffer = create_buffer(BUFSIZ);
+    if (!args.buffer) {
+        rb_raise(rb_eNoMemError, "failed to allocate decompression buffer");
+    }
     args.s = BrotliDecoderCreateInstance(brotli_alloc, brotli_free, NULL);
     if (!args.s) {
         brotli_inflate_cleanup(&args);
@@ -183,6 +201,11 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     rb_thread_call_without_gvl(brotli_inflate_no_gvl, &args, NULL, NULL);
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
+
+    if (args.oom) {
+        brotli_inflate_cleanup(&args);
+        rb_raise(rb_eNoMemError, "failed to allocate decompression buffer");
+    }
 
     if (args.r == BROTLI_DECODER_RESULT_SUCCESS) {
         int state = 0;
@@ -328,6 +351,7 @@ typedef struct {
     buffer_t* buffer;
     BROTLI_BOOL finished;
     BrotliEncoderPreparedDictionary* prepared_dict;
+    int oom;
 } brotli_deflate_args_t;
 
 static void
@@ -368,7 +392,11 @@ brotli_deflate_no_gvl(void *arg)
             args->finished = BROTLI_FALSE;
             break;
         } else {
-            append_buffer(buffer, output, next_out - output);
+            if (append_buffer(buffer, output, next_out - output) != 0) {
+                args->oom = 1;
+                args->finished = BROTLI_FALSE;
+                break;
+            }
             available_out = BUFSIZ;
             next_out = output;
 
@@ -416,6 +444,9 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     args.len = (size_t)RSTRING_LEN(str);
     max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
     args.buffer = create_buffer(max_compressed_size);
+    if (!args.buffer) {
+        rb_raise(rb_eNoMemError, "failed to allocate compression buffer");
+    }
     args.s = BrotliEncoderCreateInstance(brotli_alloc, brotli_free, NULL);
     if (!args.s) {
         brotli_deflate_cleanup(&args);
@@ -451,6 +482,10 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     rb_thread_call_without_gvl(brotli_deflate_no_gvl, &args, NULL, NULL);
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
+    if (args.oom) {
+        brotli_deflate_cleanup(&args);
+        rb_raise(rb_eNoMemError, "failed to allocate compression buffer");
+    }
     if (args.finished == BROTLI_TRUE) {
         int state = 0;
         value = rb_protect(brotli_deflate_take_result, (VALUE)&args, &state);
@@ -499,7 +534,9 @@ brotli_copy_string_data(VALUE string, size_t* len)
     StringValue(string);
     copy_len = (size_t)RSTRING_LEN(string);
     alloc_len = copy_len > 0 ? copy_len : 1;
-    copy = brotli_alloc(NULL, alloc_len);
+    /* dict_data is allocated and freed with the GVL held, so it stays
+     * Ruby-managed (ruby_xmalloc raises on failure -- no NULL check needed). */
+    copy = ruby_xmalloc(alloc_len);
     if (copy_len > 0) {
         memcpy(copy, RSTRING_PTR(string), copy_len);
     }
@@ -588,7 +625,7 @@ brotli_encoder_destroy(brotli_encoder_t* encoder)
         BrotliEncoderDestroyPreparedDictionary(encoder->prepared_dict);
         encoder->prepared_dict = NULL;
     }
-    brotli_free(NULL, encoder->dict_data);
+    ruby_xfree(encoder->dict_data);
     encoder->dict_data = NULL;
     encoder->dict_len = 0;
     encoder->finished = BROTLI_FALSE;
@@ -633,7 +670,7 @@ brotli_encoder_attach_dictionary(brotli_encoder_t* encoder, VALUE opts)
         NULL);
 
     if (!encoder->prepared_dict) {
-        brotli_free(NULL, encoder->dict_data);
+        ruby_xfree(encoder->dict_data);
         encoder->dict_data = NULL;
         encoder->dict_len = 0;
         rb_raise(rb_eBrotli, "Failed to prepare dictionary for compression");
@@ -642,7 +679,7 @@ brotli_encoder_attach_dictionary(brotli_encoder_t* encoder, VALUE opts)
     if (!BrotliEncoderAttachPreparedDictionary(encoder->state, encoder->prepared_dict)) {
         BrotliEncoderDestroyPreparedDictionary(encoder->prepared_dict);
         encoder->prepared_dict = NULL;
-        brotli_free(NULL, encoder->dict_data);
+        ruby_xfree(encoder->dict_data);
         encoder->dict_data = NULL;
         encoder->dict_len = 0;
         rb_raise(rb_eBrotli, "Failed to attach dictionary for compression");
@@ -843,7 +880,7 @@ brotli_decompressor_free(void *p)
         BrotliDecoderDestroyInstance(br->state);
         br->state = NULL;
     }
-    brotli_free(NULL, br->dict_data);
+    ruby_xfree(br->dict_data);
     br->dict_data = NULL;
     br->dict_len = 0;
     br->pending_input = Qnil;
@@ -866,7 +903,7 @@ brotli_decompressor_reset(VALUE self, brotli_decompressor_t* br)
         br->state = NULL;
     }
 
-    brotli_free(NULL, br->dict_data);
+    ruby_xfree(br->dict_data);
     br->dict_data = NULL;
     br->dict_len = 0;
     brotli_decompressor_set_pending_input(self, br, Qnil);
@@ -934,7 +971,7 @@ brotli_decompressor_attach_dictionary(brotli_decompressor_t* br, VALUE opts)
                                        BROTLI_SHARED_DICTIONARY_RAW,
                                        br->dict_len,
                                        br->dict_data)) {
-        brotli_free(NULL, br->dict_data);
+        ruby_xfree(br->dict_data);
         br->dict_data = NULL;
         br->dict_len = 0;
         rb_raise(rb_eBrotli, "Failed to attach dictionary for decompression");
