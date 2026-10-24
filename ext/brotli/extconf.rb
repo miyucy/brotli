@@ -106,7 +106,9 @@ def system_brotli_available?
               have_header("brotli/shared_dictionary.h") &&
               have_func("BrotliEncoderPrepareDictionary", "brotli/encode.h") &&
               have_func("BrotliEncoderAttachPreparedDictionary", "brotli/encode.h") &&
-              have_func("BrotliDecoderAttachDictionary", "brotli/decode.h")
+              have_func("BrotliDecoderAttachDictionary", "brotli/decode.h") &&
+              # CVE-2026-111497: patched decoders (1.2.1+, or distro backports) define this error code.
+              have_const("BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH", "brotli/decode.h")
 
   restore_mkmf_flags(flags) unless available
   available
