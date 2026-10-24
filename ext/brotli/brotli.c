@@ -74,6 +74,7 @@ typedef struct {
     BrotliDecoderResult r;
     uint8_t* dict;
     size_t dict_len;
+    int oom;
 } brotli_inflate_args_t;
 
 static void
@@ -116,14 +117,19 @@ brotli_inflate_no_gvl(void *arg)
         if (r != BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT) {
             break;
         }
-        append_buffer(buffer, output, BUFSIZ);
+        if (append_buffer(buffer, output, BUFSIZ) != 0) {
+            args->oom = 1;
+            break;
+        }
         available_out = BUFSIZ;
         next_out = output;
     }
 
     if (r == BROTLI_DECODER_RESULT_SUCCESS) {
         if (next_out != output) {
-            append_buffer(buffer, output, next_out - output);
+            if (append_buffer(buffer, output, next_out - output) != 0) {
+                args->oom = 1;
+            }
         }
     }
     args->r = r;
@@ -166,6 +172,10 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     args.len = (size_t)RSTRING_LEN(str);
     args.s = brotli_decoder_state_create();
     args.buffer = create_buffer(BUFSIZ);
+    if (!args.buffer) {
+        brotli_inflate_cleanup(&args);
+        rb_raise(rb_eNoMemError, "failed to allocate decompression buffer");
+    }
     args.r = BROTLI_DECODER_RESULT_ERROR;
 
     if (!NIL_P(dict)) {
@@ -179,6 +189,12 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     rb_thread_call_without_gvl(brotli_inflate_no_gvl, &args, NULL, NULL);
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
+
+    /* Check before args.r: a failed final append leaves r at SUCCESS. */
+    if (args.oom) {
+        brotli_inflate_cleanup(&args);
+        rb_raise(rb_eNoMemError, "failed to allocate decompression buffer");
+    }
 
     if (args.r == BROTLI_DECODER_RESULT_SUCCESS) {
         int state = 0;
@@ -324,6 +340,7 @@ typedef struct {
     buffer_t* buffer;
     BROTLI_BOOL finished;
     BrotliEncoderPreparedDictionary* prepared_dict;
+    int oom;
 } brotli_deflate_args_t;
 
 static void
@@ -364,7 +381,11 @@ brotli_deflate_no_gvl(void *arg)
             args->finished = BROTLI_FALSE;
             break;
         } else {
-            append_buffer(buffer, output, next_out - output);
+            if (append_buffer(buffer, output, next_out - output) != 0) {
+                args->oom = 1;
+                args->finished = BROTLI_FALSE;
+                break;
+            }
             available_out = BUFSIZ;
             next_out = output;
 
@@ -418,6 +439,10 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     }
     max_compressed_size = BrotliEncoderMaxCompressedSize(args.len);
     args.buffer = create_buffer(max_compressed_size);
+    if (!args.buffer) {
+        brotli_deflate_cleanup(&args);
+        rb_raise(rb_eNoMemError, "failed to allocate compression buffer");
+    }
     args.finished = BROTLI_FALSE;
 
     args.prepared_dict = NULL;
@@ -443,6 +468,10 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     rb_thread_call_without_gvl(brotli_deflate_no_gvl, &args, NULL, NULL);
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
+    if (args.oom) {
+        brotli_deflate_cleanup(&args);
+        rb_raise(rb_eNoMemError, "failed to allocate compression buffer");
+    }
     if (args.finished == BROTLI_TRUE) {
         int state = 0;
         value = rb_protect(brotli_deflate_take_result, (VALUE)&args, &state);

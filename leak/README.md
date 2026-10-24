@@ -50,27 +50,27 @@ fixtures:
   self-test.)
 
 Latest self-test: **6/6 detector checks pass**. On real code, `leak:faults`
-catches the known output-buffer OOM leak below (`RSS_DELTA` +215 MB over 50
-iterations).
+caught the output-buffer OOM leak below (`RSS_DELTA` +215 MB over 50
+iterations) before it was fixed.
 
 ## Targets
 
 - **Fixed** (should be clean): `rb_str_new` OOM leak in `inflate`/`deflate`.
-- **Known defect: output-buffer OOM leak.** `inflate` grows its output buffer
-  with `ruby_xrealloc` inside the no-GVL worker. When that fails, Ruby
-  re-acquires the GVL and raises `NoMemoryError` from inside the worker, and the
-  longjmp skips the caller's cleanup, leaking the decoder state and the buffer.
-  Reproduce it:
+- **Fixed** (should be clean): output-buffer OOM leak. `inflate` used to grow
+  its output buffer with `ruby_xrealloc` inside the no-GVL worker. When that
+  failed, Ruby re-acquired the GVL and raised `NoMemoryError` from inside the
+  worker, and the longjmp skipped the caller's cleanup, leaking the decoder
+  state and the buffer. The buffer now uses `malloc`/`realloc`/`free`, and the
+  GVL-holding caller raises `NoMemoryError` after cleanup. Check it:
 
   ```sh
   bundle exec rake leak:faults LEAK_ITER=50   # fails every allocation >= 8 MB,
                                               # i.e. the BOMB payload's buffer
   ```
 
-  `RSS_DELTA` grows by about 4 MB per iteration while the defect is present
-  (+215 MB at 50 iterations). Once it is fixed, it matches a run without
-  `FAIL_MIN_SIZE` (about +20 MB at 50 iterations, the workload's own heap
-  growth).
+  `RSS_DELTA` should match a run without `FAIL_MIN_SIZE` (about +20 MB at 50
+  iterations, the workload's own heap growth). With the leak it grew by about
+  4 MB per iteration (+215 MB at 50 iterations).
 
 ## Build flags
 
