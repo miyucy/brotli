@@ -3,6 +3,7 @@
 static VALUE rb_eBrotli;
 static ID id_cmp;
 static ID id_dictionary;
+static ID id_large_window;
 static ID id_font;
 static ID id_generic;
 static ID id_lgblock;
@@ -177,6 +178,12 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
         rb_raise(rb_eNoMemError, "failed to allocate decompression buffer");
     }
     args.r = BROTLI_DECODER_RESULT_ERROR;
+
+    if (RTEST(brotli_hash_lookup(opts, id_large_window)) &&
+        !BrotliDecoderSetParameter(args.s, BROTLI_DECODER_PARAM_LARGE_WINDOW, 1)) {
+        brotli_inflate_cleanup(&args);
+        rb_raise(rb_eBrotli, "Failed to enable large-window decompression");
+    }
 
     if (!NIL_P(dict)) {
         args.dict = (uint8_t*)RSTRING_PTR(dict);
@@ -971,6 +978,10 @@ rb_decompressor_initialize(int argc, VALUE* argv, VALUE self)
     rb_scan_args(argc, argv, "01", &opts);
     TypedData_Get_Struct(self, brotli_decompressor_t, &brotli_decompressor_data_type, br);
     brotli_decompressor_reset(self, br);
+    if (RTEST(brotli_hash_lookup(opts, id_large_window)) &&
+        !BrotliDecoderSetParameter(br->state, BROTLI_DECODER_PARAM_LARGE_WINDOW, 1)) {
+        rb_raise(rb_eBrotli, "Failed to enable large-window decompression");
+    }
     brotli_decompressor_attach_dictionary(br, opts);
 
     return self;
@@ -1216,6 +1227,7 @@ Init_brotli(void)
     rb_define_singleton_method(rb_mBrotli, "version", brotli_version, 0);
     id_cmp = rb_intern("<=>");
     id_dictionary = rb_intern("dictionary");
+    id_large_window = rb_intern("large_window");
     id_font = rb_intern("font");
     id_generic = rb_intern("generic");
     id_lgblock = rb_intern("lgblock");

@@ -205,3 +205,18 @@ To install this gem onto your local machine, run `bundle exec rake install`. To 
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at https://github.com/miyucy/brotli.
+
+### Large-window Brotli
+
+RFC 9841 large-window streams are rejected by default. Applications that require
+this extension, such as readers of the PDF Association Brotli extension, can opt
+in for a single decoder:
+
+```ruby
+Brotli.inflate(compressed, large_window: true)
+Brotli::Reader.new(io, large_window: true)
+Brotli::Decompressor.new(large_window: true)
+```
+
+The option does not enable shared dictionaries or a framing format and does not
+change the default for other decoders.
