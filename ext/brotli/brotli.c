@@ -146,6 +146,13 @@ brotli_inflate_take_result(VALUE arg)
 }
 
 static VALUE
+brotli_inflate_run(VALUE arg)
+{
+    rb_thread_call_without_gvl(brotli_inflate_no_gvl, (void *)arg, NULL, NULL);
+    return Qnil;
+}
+
+static VALUE
 brotli_inflate(int argc, VALUE *argv, VALUE self)
 {
     VALUE str = Qnil;
@@ -154,6 +161,7 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     VALUE dict = Qnil;
     const char *error = NULL;
     brotli_inflate_args_t args = {0};
+    int state = 0;
 
     (void)self;
 
@@ -193,9 +201,18 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
         args.dict_len = 0;
     }
 
-    rb_thread_call_without_gvl(brotli_inflate_no_gvl, &args, NULL, NULL);
+    /*
+     * rb_thread_call_without_gvl() handles pending interrupts (Thread#raise,
+     * Timeout, signals) around the worker and may raise from there. Catch it
+     * so the decoder state and output buffer are released before re-raising.
+     */
+    rb_protect(brotli_inflate_run, (VALUE)&args, &state);
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
+    if (state) {
+        brotli_inflate_cleanup(&args);
+        rb_jump_tag(state);
+    }
 
     /* Check before args.r: a failed final append leaves r at SUCCESS. */
     if (args.oom) {
@@ -204,7 +221,6 @@ brotli_inflate(int argc, VALUE *argv, VALUE self)
     }
 
     if (args.r == BROTLI_DECODER_RESULT_SUCCESS) {
-        int state = 0;
         value = rb_protect(brotli_inflate_take_result, (VALUE)&args, &state);
         if (state) {
             brotli_inflate_cleanup(&args);
@@ -414,6 +430,13 @@ brotli_deflate_take_result(VALUE arg)
 }
 
 static VALUE
+brotli_deflate_run(VALUE arg)
+{
+    rb_thread_call_without_gvl(brotli_deflate_no_gvl, (void *)arg, NULL, NULL);
+    return Qnil;
+}
+
+static VALUE
 brotli_deflate(int argc, VALUE *argv, VALUE self)
 {
     VALUE str = Qnil;
@@ -423,6 +446,7 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
     brotli_deflate_args_t args = {0};
     size_t max_compressed_size;
     const char *err;
+    int state = 0;
 
     (void)self;
 
@@ -472,15 +496,19 @@ brotli_deflate(int argc, VALUE *argv, VALUE self)
         }
     }
 
-    rb_thread_call_without_gvl(brotli_deflate_no_gvl, &args, NULL, NULL);
+    /* See brotli_inflate: an interrupt may raise out of the GVL release. */
+    rb_protect(brotli_deflate_run, (VALUE)&args, &state);
     RB_GC_GUARD(str);
     RB_GC_GUARD(dict);
+    if (state) {
+        brotli_deflate_cleanup(&args);
+        rb_jump_tag(state);
+    }
     if (args.oom) {
         brotli_deflate_cleanup(&args);
         rb_raise(rb_eNoMemError, "failed to allocate compression buffer");
     }
     if (args.finished == BROTLI_TRUE) {
-        int state = 0;
         value = rb_protect(brotli_deflate_take_result, (VALUE)&args, &state);
         if (state) {
             brotli_deflate_cleanup(&args);

@@ -71,6 +71,13 @@ iterations) before it was fixed.
   `RSS_DELTA` should match a run without `FAIL_MIN_SIZE` (about +20 MB at 50
   iterations, the workload's own heap growth). With the leak it grew by about
   4 MB per iteration (+215 MB at 50 iterations).
+- **Fixed** (should be clean): interrupt leak in `inflate`/`deflate`.
+  `rb_thread_call_without_gvl` handles pending interrupts (`Thread#raise`,
+  `Timeout`, signals) around the worker and may raise from there, and the
+  longjmp skipped the caller's cleanup, leaking the coder state and the
+  buffer. The call now runs under `rb_protect`, which cleans up and re-raises.
+  `workload.rb` raises into both calls on every round (`interrupt_inside`);
+  with the leak, `leaks` reported ~1.2 GB over `LEAK_ITER=200`.
 
 ## Build flags
 

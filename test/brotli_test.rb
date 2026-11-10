@@ -131,6 +131,45 @@ class BrotliTest < Test::Unit::TestCase
     end
   end
 
+  sub_test_case "interrupt while the GVL is released" do
+    GVLInterrupt = Class.new(StandardError)
+
+    # Queues Thread#raise while it is masked, then unmasks it only for blocking
+    # operations, so it fires when the C call releases the GVL rather than
+    # before or after the call. Returns whether the code after the call ran.
+    def raise_inside(&call)
+      ready = Queue.new
+      finished = false
+      thread = Thread.new do
+        Thread.current.report_on_exception = false
+        Thread.handle_interrupt(GVLInterrupt => :never) do
+          ready << true
+          Thread.pass until Thread.pending_interrupt?
+          Thread.handle_interrupt(GVLInterrupt => :on_blocking) do
+            call.call
+            finished = true
+          end
+        end
+      end
+      ready.pop
+      thread.raise(GVLInterrupt, "interrupt")
+      assert_raise(GVLInterrupt) { thread.join }
+      finished
+    end
+
+    test "inflate re-raises the interrupt" do
+      compressed = Brotli.deflate(testdata)
+
+      assert_false raise_inside { Brotli.inflate(compressed) }
+      assert_equal testdata, Brotli.inflate(compressed)
+    end
+
+    test "deflate re-raises the interrupt" do
+      assert_false raise_inside { Brotli.deflate(testdata) }
+      assert_equal testdata, Brotli.inflate(Brotli.deflate(testdata))
+    end
+  end
+
   sub_test_case "dictionary support" do
     def dictionary_data
       "The quick brown fox jumps over the lazy dog"

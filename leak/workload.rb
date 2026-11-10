@@ -79,6 +79,29 @@ rescue NoMemoryError, Brotli::Error
   rescued[:n] += 1
 end
 
+WorkloadInterrupt = Class.new(StandardError)
+
+# Raises into a thread while the block's C call has released the GVL.
+# Thread#raise is queued while masked, then unmasked only for blocking
+# operations, so it fires at rb_thread_call_without_gvl instead of at a random
+# point. inflate/deflate leaked their state and buffer on this path.
+def interrupt_inside
+  ready = Queue.new
+  thread = Thread.new do
+    Thread.current.report_on_exception = false
+    Thread.handle_interrupt(WorkloadInterrupt => :never) do
+      ready << true
+      Thread.pass until Thread.pending_interrupt?
+      Thread.handle_interrupt(WorkloadInterrupt => :on_blocking) { yield }
+    end
+  end
+  ready.pop
+  thread.raise(WorkloadInterrupt)
+  thread.join
+rescue WorkloadInterrupt
+  nil
+end
+
 def one_round(rescued, fault)
   if fault
     guard(rescued) { Brotli.inflate(Brotli.deflate(SMALL)) }   # create_buffer path
@@ -91,6 +114,8 @@ def one_round(rescued, fault)
     Brotli.inflate(BIG_COMP)
     c = Brotli::Compressor.new;   c.process(BIG_PLAIN); c.finish
     d = Brotli::Decompressor.new; d.process(BIG_COMP)
+    interrupt_inside { Brotli.inflate(BIG_COMP) }              # interrupt path
+    interrupt_inside { Brotli.deflate(BIG_PLAIN) }
   end
 end
 
