@@ -192,20 +192,6 @@ You usually do not need `output_buffer_limit:` when:
 - you are using `Brotli::Reader`, which already handles incremental buffering for IO-style reads
 - you are happy for each `#process` call to return all currently available output
 
-See test/brotli_test.rb for more examples.
-
-## Development
-
-After checking out the repo, run `bin/setup` to install bundle and Brotli C library dependencies.
-
-Run `rake build` to build the Brotli extension for Ruby. Then, run `rake test` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
-
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and tags, and push the `.gem` file to [rubygems.org](https://rubygems.org).
-
-## Contributing
-
-Bug reports and pull requests are welcome on GitHub at https://github.com/miyucy/brotli.
-
 ### Large-window Brotli
 
 RFC 9841 large-window streams are rejected by default. Applications that require
@@ -220,3 +206,24 @@ Brotli::Decompressor.new(large_window: true)
 
 The option does not enable shared dictionaries or a framing format and does not
 change the default for other decoders.
+
+**Memory warning:** with `large_window: true`, the stream header may request a
+window of up to 1 GiB (2^30 bytes), and the decoder allocates its ring buffer
+to match. A small untrusted input can therefore make a single decoder reserve
+close to 1 GiB. `output_buffer_limit:` does not bound this allocation. Enable
+the option only for trusted input, or enforce a memory limit at the process or
+container level.
+
+See test/brotli_test.rb for more examples.
+
+## Development
+
+After checking out the repo, run `bin/setup` to install bundle and Brotli C library dependencies.
+
+Run `rake build` to build the Brotli extension for Ruby. Then, run `rake test` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
+
+To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and tags, and push the `.gem` file to [rubygems.org](https://rubygems.org).
+
+## Contributing
+
+Bug reports and pull requests are welcome on GitHub at https://github.com/miyucy/brotli.
