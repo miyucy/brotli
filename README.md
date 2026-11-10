@@ -192,6 +192,28 @@ You usually do not need `output_buffer_limit:` when:
 - you are using `Brotli::Reader`, which already handles incremental buffering for IO-style reads
 - you are happy for each `#process` call to return all currently available output
 
+### Large-window Brotli
+
+RFC 9841 large-window streams are rejected by default. Applications that require
+this extension, such as readers of the PDF Association Brotli extension, can opt
+in for a single decoder:
+
+```ruby
+Brotli.inflate(compressed, large_window: true)
+Brotli::Reader.new(io, large_window: true)
+Brotli::Decompressor.new(large_window: true)
+```
+
+The option does not enable shared dictionaries or a framing format and does not
+change the default for other decoders.
+
+**Memory warning:** with `large_window: true`, the stream header may request a
+window of up to 1 GiB (2^30 bytes), and the decoder allocates its ring buffer
+to match. A small untrusted input can therefore make a single decoder reserve
+close to 1 GiB. `output_buffer_limit:` does not bound this allocation. Enable
+the option only for trusted input, or enforce a memory limit at the process or
+container level.
+
 See test/brotli_test.rb for more examples.
 
 ## Development
